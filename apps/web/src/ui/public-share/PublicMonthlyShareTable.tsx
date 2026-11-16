@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import type { SupportedLocale } from "@/lib/locale";
 import type { PublicMonthlyShareTableModel } from "@/ui/public-share/publicMonthlyShareModel";
 
@@ -219,14 +220,14 @@ export const PublicMonthlyShareTable = (props: PublicMonthlyShareTableProps): Re
                 if (column.kind === "month") {
                   return (
                     <td key={key} className={styles.cell} data-month={column.month}>
-                      {amountFormatter.format(row.monthAmounts.get(column.month) ?? 0)}
+                      <NumericText>{amountFormatter.format(row.monthAmounts.get(column.month) ?? 0)}</NumericText>
                     </td>
                   );
                 }
 
                 return (
                   <td key={key} className={`${styles.cell} ${styles.yearTotal}`}>
-                    {amountFormatter.format(row.yearTotals.get(column.year) ?? 0)}
+                    <NumericText>{amountFormatter.format(row.yearTotals.get(column.year) ?? 0)}</NumericText>
                   </td>
                 );
               })}

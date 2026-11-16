@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import {
@@ -118,7 +119,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                 className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${yearTaint.stateClass}`}
                 title={yearTaint.title}
               >
-                {renderValue(yearData.decemberBalancesByLiquidity[liquidity] ?? 0)}
+                <NumericText>{renderValue(yearData.decemberBalancesByLiquidity[liquidity] ?? 0)}</NumericText>
               </td>
             );
           },
@@ -133,7 +134,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                 className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${yearTaint.stateClass}`}
                 title={yearTaint.title}
               >
-                {renderValue(yearData.decemberBalancesByLiquidityPlan[liquidity] ?? 0)}
+                <NumericText>{renderValue(yearData.decemberBalancesByLiquidityPlan[liquidity] ?? 0)}</NumericText>
               </td>
             );
           },
@@ -148,13 +149,13 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                   className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${yearTaint.stateClass}`}
                   title={yearTaint.title}
                 >
-                  {renderValue(yearData.decemberBalancesByLiquidityPlan[liquidity] ?? 0)}
+                  <NumericText>{renderValue(yearData.decemberBalancesByLiquidityPlan[liquidity] ?? 0)}</NumericText>
                 </td>
                 <td
                   className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${yearTaint.stateClass}`}
                   title={yearTaint.title}
                 >
-                  {renderValue(yearData.decemberBalancesByLiquidity[liquidity] ?? 0)}
+                  <NumericText>{renderValue(yearData.decemberBalancesByLiquidity[liquidity] ?? 0)}</NumericText>
                 </td>
               </Fragment>
             );
@@ -170,7 +171,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                 className={`${styles.cell}${monthDividerClass}${derivedMaskClass}${monthTaint.stateClass}`}
                 title={monthTaint.title}
               >
-                {renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}
+                <NumericText>{renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}</NumericText>
               </td>
             );
           },
@@ -185,7 +186,7 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                 className={`${styles.cell}${monthDividerClass}${derivedMaskClass}${monthTaint.stateClass}`}
                 title={monthTaint.title}
               >
-                {renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}
+                <NumericText>{renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}</NumericText>
               </td>
             );
           },
@@ -203,13 +204,13 @@ export const LiquidityRow = (props: LiquidityRowProps): ReactElement => {
                   className={`${styles.cell}${monthDividerClass}${planEmphasisClass}${derivedMaskClass}${monthTaint.stateClass}`}
                   title={monthTaint.title}
                 >
-                  {renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}
+                  <NumericText>{renderValue(projectedLiqBalances.get(column.month)?.[liquidity] ?? 0)}</NumericText>
                 </td>
                 <td
                   className={`${styles.cell}${actualEmphasisClass}${derivedMaskClass}${monthTaint.stateClass}`}
                   title={monthTaint.title}
                 >
-                  {renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}
+                  <NumericText>{renderValue(mebByLiq[column.month]?.[liquidity] ?? 0)}</NumericText>
                 </td>
               </Fragment>
             );

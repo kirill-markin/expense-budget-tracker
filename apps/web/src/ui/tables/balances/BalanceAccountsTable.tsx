@@ -15,6 +15,7 @@ import { type Dispatch, type ReactElement, type SetStateAction } from "react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import controlsStyles from "@/ui/Controls.module.css";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
@@ -315,7 +316,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       key: "balance",
       header: t("balances.balance"),
       renderCell: (a: AccountRow): ReactElement => (
-        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>{formatAmount(a.balance, numberFormat)}</td>
+        <td key="balance" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}><NumericText>{formatAmount(a.balance, numberFormat)}</NumericText></td>
       ),
       rightAlign: true,
       sortKey: "balance",
@@ -325,7 +326,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       header: t("balances.balanceCurrency", { currency: reportingCurrency }),
       renderCell: (a: AccountRow): ReactElement => (
         <td key="balanceReport" className={cn(tableStyles.cell, tableStyles.cellRight, maskClass)}>
-          {a.balanceReport !== null ? formatAmount(a.balanceReport, numberFormat) : "\u2014"}
+          <NumericText>{a.balanceReport !== null ? formatAmount(a.balanceReport, numberFormat) : "\u2014"}</NumericText>
         </td>
       ),
       rightAlign: true,

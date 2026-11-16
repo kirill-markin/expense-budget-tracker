@@ -6,6 +6,7 @@ import type { ReactElement } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import { isCategoryVisible } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
@@ -186,7 +187,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     <>
       {!masked && (
         <div className={styles.total}>
-          {fmtTotal(grandTotal, reportingCurrency, numberFormat)}
+          <NumericText>{fmtTotal(grandTotal, reportingCurrency, numberFormat)}</NumericText>
         </div>
       )}
 
@@ -202,7 +203,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             const showHeader = cw > (compact ? 64 : 40) && ch > PAD_TOP;
 
             const headerText = `${catName} — ${fmtTotal(catTotal, reportingCurrency, numberFormat)}`;
-            const headerLabel = estTextW(headerText, 11) < cw - 8 ? headerText : catName;
+            const showHeaderAmount = estTextW(headerText, 11) < cw - 8;
 
             return (
               <g key={catName}>
@@ -258,7 +259,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                           strokeWidth={0.5}
                         />
                         {amtFits && (
-                          <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={lx + 3} y={ly + fs + 2} fill="var(--treemap-text)" fontSize={fs} fontWeight="500">
+                          <text direction="ltr" unicodeBidi="isolate" textAnchor="start" x={lx + 3} y={ly + fs + 2} fill="var(--treemap-text)" fontSize={fs} fontWeight="500">
                             {amt}
                           </text>
                         )}
@@ -293,7 +294,8 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                         strokeWidth={1}
                       />
                       <text textAnchor={i18n.dir() === "rtl" ? "end" : "start"} x={catNode.x0 + 4} y={catNode.y0 + 13} fill="var(--treemap-heading)" fontSize={11} fontWeight="700">
-                        {headerLabel}
+                        {catName}
+                        {showHeaderAmount && <> — <tspan direction="ltr" unicodeBidi="isolate">{fmtTotal(catTotal, reportingCurrency, numberFormat)}</tspan></>}
                       </text>
                     </g>
                   )}
@@ -314,11 +316,11 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             }}
           >
             <div className={styles.tooltipAmount}>
-              {fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency, numberFormat)}
+              <NumericText>{fmtCurrency(Math.abs(hover.entry.amount), hover.entry.currency, numberFormat)}</NumericText>
             </div>
             {hover.entry.amountReport !== null && hover.entry.currency !== reportingCurrency && (
               <div className={styles.tooltipConverted}>
-                ≈ {fmtCurrency(Math.abs(hover.entry.amountReport), reportingCurrency, numberFormat)}
+                <NumericText>≈ {fmtCurrency(Math.abs(hover.entry.amountReport), reportingCurrency, numberFormat)}</NumericText>
               </div>
             )}
             {hover.entry.counterparty !== null && (

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import { MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
@@ -226,7 +227,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
 
   const { numberFormat } = useFormat();
   const { resumePendingModeTransition } = useFilteredMode();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const accessibilityId = useId();
   const editorId = `budget-plan:${month}:${direction}:${category}`;
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -1153,7 +1154,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           {plannedModifier !== 0 && (
             <span className={cn(styles.iconModifier, modifierIconClass)} />
           )}
-          {formattedPlanned}
+          <NumericText>{formattedPlanned}</NumericText>
         </button>
       )}
       {showData && isOpen && createPortal(
@@ -1172,6 +1173,8 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
             <input
               ref={baseInputRef}
               type="text"
+              dir="ltr"
+              style={{ textAlign: i18n.dir() === "rtl" ? "start" : "end" }}
               inputMode="decimal"
               className={styles.popoverInput}
               data-testid={`budget-plan-base-input-${editorId}`}
@@ -1256,7 +1259,7 @@ export const BudgetPlanCell = (props: BudgetPlanCellProps): ReactElement => {
           <div className={styles.popoverTotal}>
             <span className={styles.popoverLabel}>{t("budget.popoverTotal")}</span>
             <span className={styles.popoverTotalValue}>
-              {formatAmount(computedTotal, numberFormat)}
+              <NumericText>{formatAmount(computedTotal, numberFormat)}</NumericText>
             </span>
           </div>
         </div>,

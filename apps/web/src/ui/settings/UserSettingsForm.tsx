@@ -184,6 +184,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
         <div className={styles.control}>
           <select
             id="user-number-format"
+            dir="ltr"
             className={styles.select}
             value={numberFormat}
             onChange={(e) => { setNumberFormat(e.target.value as NumberFormat); setSaved(false); }}

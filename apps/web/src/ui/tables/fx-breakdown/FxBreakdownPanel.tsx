@@ -3,6 +3,7 @@
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
 import { buildLiveDataUrl, fetchLiveData } from "@/lib/liveDataFetch";
 import type { NumberFormat } from "@/lib/locale";
@@ -161,14 +162,14 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                 {rows.map((row) => (
                   <tr key={row.currency} className={tableStyles.row}>
                     <td className={cn(tableStyles.cell, tableStyles.cellMono)}>{row.currency}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.openNative, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.openRate, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.openReport, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.flowReport, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatNative(row.closeNative, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatRate(row.closeRate, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(row.closeReport, numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStateStyles.over : "")}>{formatFxAmount(row.fxAdjustReport, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatNative(row.openNative, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatRate(row.openRate, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatAmount(row.openReport, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatAmount(row.flowReport, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatNative(row.closeNative, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatRate(row.closeRate, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatAmount(row.closeReport, numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight, row.fxAdjustReport < 0 ? tableStateStyles.over : "")}><NumericText>{formatFxAmount(row.fxAdjustReport, numberFormat)}</NumericText></td>
                   </tr>
                 ))}
                 {!loading && rows.length === 0 && (
@@ -185,12 +186,12 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
                     <td className={tableStyles.cell}>Total</td>
                     <td className={tableStyles.cell} />
                     <td className={tableStyles.cell} />
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.openReport, 0), numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatAmount(rows.reduce((s, r) => s + r.openReport, 0), numberFormat)}</NumericText></td>
                     <td className={tableStyles.cell} />
                     <td className={tableStyles.cell} />
                     <td className={tableStyles.cell} />
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</td>
-                    <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? tableStateStyles.over : "")}>{formatFxAmount(totalFxAdjust, numberFormat)}</td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight)}><NumericText>{formatAmount(rows.reduce((s, r) => s + r.closeReport, 0), numberFormat)}</NumericText></td>
+                    <td className={cn(tableStyles.cell, tableStyles.cellRight, totalFxAdjust < 0 ? tableStateStyles.over : "")}><NumericText>{formatFxAmount(totalFxAdjust, numberFormat)}</NumericText></td>
                   </tr>
                 </tfoot>
               )}

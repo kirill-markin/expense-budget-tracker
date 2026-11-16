@@ -73,7 +73,14 @@
   text-decoration: underline;
 }
 
+.markdown bdi[data-preserve-number-order] {
+  /* Preserve sign and digit order even when the token contains an RTL direction mark. */
+  unicode-bidi: isolate-override;
+}
+
 .markdown code {
+  direction: ltr;
+  unicode-bidi: isolate;
   font-family: inherit;
   font-size: 12px;
   background: var(--subtle-bg);
@@ -81,6 +88,9 @@
 }
 
 .markdown pre {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
   padding: 6px 8px;
   background: var(--subtle-bg);
   font-family: inherit;

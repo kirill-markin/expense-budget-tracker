@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 
 import styles from "./ChatMarkdown.module.css";
 import { remarkSoftLineBreaks } from "./remarkSoftLineBreaks";
+import { remarkNumericText } from "./remarkNumericText";
 
 type Props = Readonly<{
   text: string;
@@ -11,7 +12,7 @@ type Props = Readonly<{
 
 const EXTERNAL_LINK_PATTERN = /^(https?|mailto):/i;
 
-const REMARK_PLUGINS = [remarkGfm, remarkSoftLineBreaks];
+const REMARK_PLUGINS = [remarkGfm, remarkSoftLineBreaks, remarkNumericText];
 
 const COMPONENTS: Components = {
   // Only absolute external links stay clickable: relative and fragment hrefs would

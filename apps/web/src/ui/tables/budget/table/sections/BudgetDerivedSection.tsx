@@ -3,6 +3,7 @@
 import { Fragment, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { NumericText } from "@/ui/NumericText";
 import { getCellVisibility, MASKED_CELL_PLACEHOLDER } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { BusinessPersonalTransferCell } from "@/server/budget/getBudgetGrid";
@@ -167,7 +168,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
             className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(buildYearTotalStateClass(yearData.decemberBalance.isTainted, false))}`}
             title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
           >
-            {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
+            <NumericText>{renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}</NumericText>
           </td>
         )}
         renderFutureYear={(year) => (
@@ -184,7 +185,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               className={`${styles.cell} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(buildYearTotalStateClass(yearData.decemberBalance.isTainted, false))}`}
               title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
             >
-              {renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}
+              <NumericText>{renderDerivedValue(formatFxAmount(yearData.yearFxAdjust, numberFormat))}</NumericText>
             </td>
           </Fragment>
         )}
@@ -287,7 +288,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted))}`}
               title={yearUnconvertibleTitle(yearData.anyTainted, yearData.unconvertibleCurrencies) ?? undefined}
             >
-              {renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}
+              <NumericText>{renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}</NumericText>
             </td>
           );
         }}
@@ -301,7 +302,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.planned, isPlanTainted))}`}
               title={yearUnconvertibleTitle(isPlanTainted, yearData.unconvertibleCurrencies) ?? undefined}
             >
-              {renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}
+              <NumericText>{renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}</NumericText>
             </td>
           );
         }}
@@ -317,13 +318,13 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
                 className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalPlanStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.planned, isPlanTainted))}`}
                 title={yearUnconvertibleTitle(isPlanTainted, yearData.unconvertibleCurrencies) ?? undefined}
               >
-                {renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}
+                <NumericText>{renderDerivedValue(formatSignedAmount(yearData.remainder.planned, numberFormat))}</NumericText>
               </td>
               <td
                 className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalActualStateClass)} ${renderDerivedStateClass(getRemainderValueClass(yearData.remainder.actual, yearData.anyTainted))}`}
                 title={yearUnconvertibleTitle(yearData.anyTainted, yearData.unconvertibleCurrencies) ?? undefined}
               >
-                {renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}
+                <NumericText>{renderDerivedValue(formatSignedAmount(yearData.remainder.actual, numberFormat))}</NumericText>
               </td>
             </Fragment>
           );
@@ -441,7 +442,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)}`}
               title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
             >
-              {renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}
+              <NumericText>{renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}</NumericText>
             </td>
           );
         }}
@@ -453,7 +454,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
               className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalStateClass)}`}
               title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
             >
-              {renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}
+              <NumericText>{renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}</NumericText>
             </td>
           );
         }}
@@ -466,13 +467,13 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
                 className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalPlanStateClass)}`}
                 title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
               >
-                {renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}
+                <NumericText>{renderDerivedValue(formatAmount(yearData.decemberBalance.plan, numberFormat))}</NumericText>
               </td>
               <td
                 className={`${styles.cell} ${styles.cellSubtotal} ${styles.yearTotal}${derivedMaskClass}${renderDerivedStateClass(yearTotalActualStateClass)}`}
                 title={yearUnconvertibleTitle(yearData.decemberBalance.isTainted, yearData.unconvertibleCurrencies) ?? undefined}
               >
-                {renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}
+                <NumericText>{renderDerivedValue(formatAmount(yearData.decemberBalance.actual, numberFormat))}</NumericText>
               </td>
             </Fragment>
           );
@@ -604,7 +605,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
                 title={yearUnconvertibleTitle(cell.hasUnconvertible, yearData.unconvertibleCurrenciesByDirection.get(TRANSFER_DIRECTION) ?? []) ?? undefined}
                 onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
               >
-                {renderDerivedValue(formatAmount(cell.actual, numberFormat))}
+                <NumericText>{renderDerivedValue(formatAmount(cell.actual, numberFormat))}</NumericText>
               </td>
             );
           }}
@@ -626,7 +627,7 @@ export const BudgetDerivedSection = (props: BudgetDerivedSectionProps): ReactEle
                   title={yearUnconvertibleTitle(cell.hasUnconvertible, yearData.unconvertibleCurrenciesByDirection.get(TRANSFER_DIRECTION) ?? []) ?? undefined}
                   onClick={canOpenDerivedDrillDown ? () => openDrillDown(buildBusinessPersonalTransferYearDrillDownFilter(year)) : undefined}
                 >
-                  {renderDerivedValue(formatAmount(cell.actual, numberFormat))}
+                  <NumericText>{renderDerivedValue(formatAmount(cell.actual, numberFormat))}</NumericText>
                 </td>
               </Fragment>
             );
