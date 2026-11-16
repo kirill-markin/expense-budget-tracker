@@ -169,6 +169,11 @@
 
 /* The width-only fit ladder is shared by touch and the compact fine-pointer header. */
 @media (max-width: 1099px), (pointer: coarse) {
+  .nav {
+    min-block-size: var(--touch-target);
+    padding-block: 0;
+  }
+
   .header-sticky {
     --mode-strip-color: var(--muted);
     --mode-strip-active-color: var(--text);

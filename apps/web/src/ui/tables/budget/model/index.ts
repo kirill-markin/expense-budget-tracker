@@ -4,3 +4,4 @@ export * from "@/ui/tables/budget/model/cells";
 export * from "@/ui/tables/budget/model/dateRanges";
 export * from "@/ui/tables/budget/model/plansMode";
 export * from "@/ui/tables/budget/model/yearTotals";
+export * from "@/ui/tables/budget/model/columnSizing";

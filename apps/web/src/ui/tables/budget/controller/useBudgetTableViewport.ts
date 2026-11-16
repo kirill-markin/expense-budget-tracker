@@ -20,6 +20,7 @@ const YEAR_OBSERVATION_ATTRIBUTE = "data-budget-year-total";
 type UseBudgetTableViewportParams = Readonly<{
   currentMonth: string;
   plansMode: BudgetPlansMode;
+  columnWidthsSignature: string;
   pendingSaves: number;
   onMonthsObserved: (monthFrom: string, monthTo: string) => void;
   onYearTotalsObserved: (years: ReadonlySet<string>) => void;
@@ -33,6 +34,7 @@ export type BudgetTableViewportState = Readonly<{
 export const useBudgetTableViewport = ({
   currentMonth,
   plansMode,
+  columnWidthsSignature,
   pendingSaves,
   onMonthsObserved,
   onYearTotalsObserved,
@@ -41,7 +43,7 @@ export const useBudgetTableViewport = ({
   const scrollAnchorRef = useRef<BudgetScrollAnchor | null>(null);
   const anchorMeasurementFrameRef = useRef<number | null>(null);
   const lastAnchorMeasurementRef = useRef<Readonly<{ scrollLeft: number; width: number }> | null>(null);
-  const isPlansModeLayoutSettledRef = useRef(false);
+  const hasScrolledRef = useRef(false);
   const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
 
   // Inline start of the scrollable value area: the first pixel the sticky
@@ -75,20 +77,6 @@ export const useBudgetTableViewport = ({
       isRtl,
     );
   }, [getValueAreaInlineStart, isRtl]);
-
-  const scrollToCurrentMonth = useCallback((): void => {
-    const scrollElement = scrollRef.current;
-    if (scrollElement === null) {
-      return;
-    }
-
-    const monthElement = scrollElement.querySelector<HTMLElement>(`[data-month="${currentMonth}"]`);
-    if (monthElement === null) {
-      return;
-    }
-
-    scrollMonthToInlineOffset(monthElement, scrollElement, 0);
-  }, [currentMonth, scrollMonthToInlineOffset]);
 
   // Where the user is reading right now: the month at the inline start of the
   // value area and how far into the area it begins. Measured from the live
@@ -129,6 +117,26 @@ export const useBudgetTableViewport = ({
     };
   }, [getValueAreaInlineStart, isRtl]);
 
+  const scrollToCurrentMonth = useCallback((): void => {
+    const scrollElement = scrollRef.current;
+    if (scrollElement === null) {
+      return;
+    }
+
+    const monthElement = scrollElement.querySelector<HTMLElement>(`[data-month="${currentMonth}"]`);
+    if (monthElement === null) {
+      return;
+    }
+
+    if (anchorMeasurementFrameRef.current !== null) {
+      cancelAnimationFrame(anchorMeasurementFrameRef.current);
+      anchorMeasurementFrameRef.current = null;
+    }
+    hasScrolledRef.current = false;
+    scrollMonthToInlineOffset(monthElement, scrollElement, 0);
+    measureScrollAnchor();
+  }, [currentMonth, measureScrollAnchor, scrollMonthToInlineOffset]);
+
   // One measurement per animation frame keeps a continuous drag cheap and
   // still leaves the anchor at most a frame behind the viewport.
   //
@@ -154,6 +162,7 @@ export const useBudgetTableViewport = ({
       ) {
         return;
       }
+      hasScrolledRef.current = true;
       if (anchorMeasurementFrameRef.current !== null) {
         return;
       }
@@ -173,53 +182,16 @@ export const useBudgetTableViewport = ({
     };
   }, [measureScrollAnchor]);
 
-  useLayoutEffect(() => {
-    scrollToCurrentMonth();
-    // Seeds the anchor from the first laid-out rows, so a mode switch made
-    // without scrolling at all still restores a measured position.
-    measureScrollAnchor();
-  }, [measureScrollAnchor, scrollToCurrentMonth]);
-
-  // Phone columns are narrower. Restore before scroll-event measurements can
-  // replace the old anchor with geometry from a resized window or tablet.
-  useEffect(() => {
-    const restoreAfterResize = (): void => {
-      const scrollElement = scrollRef.current;
-      if (scrollElement === null) return;
-      if (anchorMeasurementFrameRef.current !== null) {
-        cancelAnimationFrame(anchorMeasurementFrameRef.current);
-        anchorMeasurementFrameRef.current = null;
-      }
-      const anchor = scrollAnchorRef.current;
-      const monthElement = anchor === null ? null : scrollElement.querySelector<HTMLElement>(
-        `[${MONTH_OBSERVATION_ATTRIBUTE}="${anchor.month}"]`,
-      );
-      if (anchor !== null && monthElement !== null) {
-        scrollMonthToInlineOffset(monthElement, scrollElement, anchor.inlineOffset);
-      } else {
-        scrollToCurrentMonth();
-      }
-      measureScrollAnchor();
-    };
-    window.addEventListener("resize", restoreAfterResize);
-    return () => window.removeEventListener("resize", restoreAfterResize);
-  }, [measureScrollAnchor, scrollMonthToInlineOffset, scrollToCurrentMonth]);
-
-  // Switching the mode doubles or halves the width of every elapsed month, so
-  // the same `scrollLeft` points at completely different months afterwards.
-  // This runs once the new value columns and the new inline size are
-  // committed, so it works on the geometry the user is about to see.
-  useLayoutEffect(() => {
-    if (!isPlansModeLayoutSettledRef.current) {
-      isPlansModeLayoutSettledRef.current = true;
-      return;
-    }
-
+  // Widths can change when lazy-loaded months, year totals or edits land.
+  // Restore from the pre-commit anchor, before scroll events can measure the
+  // new geometry with the old scrollLeft.
+  const restoreScrollAnchor = useCallback((): void => {
     // The new columns are committed with the old `scrollLeft`, so measuring
     // now would read an arbitrary month: only the measurement taken before
     // this commit still says what the user was reading.
     const restoration = selectBudgetScrollAnchorRestoration(
       scrollAnchorRef.current,
+      hasScrolledRef.current,
     );
     if (anchorMeasurementFrameRef.current !== null) {
       cancelAnimationFrame(anchorMeasurementFrameRef.current);
@@ -244,6 +216,7 @@ export const useBudgetTableViewport = ({
       );
     } else {
       scrollToCurrentMonth();
+      return;
     }
 
     // The anchor has to describe the columns now on screen: the scroll above
@@ -252,10 +225,20 @@ export const useBudgetTableViewport = ({
     measureScrollAnchor();
   }, [
     measureScrollAnchor,
-    plansMode,
     scrollMonthToInlineOffset,
     scrollToCurrentMonth,
   ]);
+
+  // The signature describes the individual committed widths, including changes
+  // that redistribute widths without changing the table's total inline size.
+  useLayoutEffect(() => {
+    restoreScrollAnchor();
+  }, [columnWidthsSignature, plansMode, restoreScrollAnchor]);
+
+  useEffect(() => {
+    window.addEventListener("resize", restoreScrollAnchor);
+    return () => window.removeEventListener("resize", restoreScrollAnchor);
+  }, [restoreScrollAnchor]);
 
   useEffect(() => {
     if (pendingSaves === 0) {

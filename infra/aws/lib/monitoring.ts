@@ -374,15 +374,17 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     treatMissingData: cloudwatch.TreatMissingData.BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
-  // Lambda FX fetcher errors
+  // EventBridge invokes the FX fetcher asynchronously, so a failed attempt is retried by
+  // Lambda and a transient source timeout usually heals. An event is dropped only once every
+  // retry has failed, which is the outage worth an email.
   new cloudwatch.Alarm(scope, "FxLambdaErrorAlarm", {
-    metric: props.fxFetcher.metricErrors({
-      period: cdk.Duration.hours(1),
+    metric: props.fxFetcher.metric("AsyncEventsDropped", {
+      period: cdk.Duration.minutes(5),
       statistic: "Sum",
     }),
     threshold: 1,
     evaluationPeriods: 1,
-    alarmDescription: "FX fetcher Lambda had errors",
+    alarmDescription: "FX fetcher failed on every asynchronous retry and its scheduled event was dropped",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 

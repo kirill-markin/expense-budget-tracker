@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import type { FieldHints } from "@/server/transactions/getTransactions";
 import type { BudgetAdjustment } from "@/server/budget/budgetAdjustments";
@@ -22,7 +21,6 @@ import {
   useBudgetTableRangeState,
   type BudgetVisibleRangeRefreshOutcome,
 } from "@/ui/tables/budget/controller/useBudgetTableRangeState";
-import { useBudgetTableViewport } from "@/ui/tables/budget/controller/useBudgetTableViewport";
 import { useBudgetTableYearTotals } from "@/ui/tables/budget/controller/useBudgetTableYearTotals";
 import { useBudgetAdjustmentRowsController } from "@/ui/tables/budget/controller/useBudgetAdjustmentRowsController";
 import type {
@@ -111,11 +109,11 @@ export type BudgetTableController = Readonly<{
   yearComputed: ReadonlyMap<string, YearTotalComputed>;
   pendingSaves: number;
   budgetAdjustments: BudgetAdjustmentRowsController;
-  scrollRef: RefObject<HTMLDivElement | null>;
+  onMonthsObserved: (monthFrom: string, monthTo: string) => void;
+  onYearTotalsObserved: (years: ReadonlySet<string>) => void;
   drillDownFilter: DrillDownFilter | null;
   fxBreakdownMonth: string | null;
   mebByLiq: Readonly<Record<string, Readonly<Record<string, number>>>>;
-  scrollToCurrentMonth: () => void;
   setPlansMode: (plansMode: BudgetPlansMode) => void;
   /**
    * Refreshes the loaded range again, which is exactly the run a stuck request
@@ -339,16 +337,6 @@ export const useBudgetTableController = (
     });
   }, []);
 
-  const viewportState = useBudgetTableViewport({
-    currentMonth,
-    // The value columns are re-widthed by the mode that renders, so the
-    // scroll anchor is restored when the loaded rows change the layout.
-    plansMode: loadedPlansMode,
-    pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
-    onMonthsObserved: rangeState.requestVisibleMonths,
-    onYearTotalsObserved: handleYearTotalsObserved,
-  });
-
   const refreshLoadedRange = rangeState.refreshLoadedRange;
   const requestPlansMode = useCallback((
     nextPlansMode: BudgetPlansMode,
@@ -453,11 +441,11 @@ export const useBudgetTableController = (
     yearComputed,
     pendingSaves: rangeState.pendingSaves + budgetAdjustments.pendingMutationCount,
     budgetAdjustments,
-    scrollRef: viewportState.scrollRef,
+    onMonthsObserved: rangeState.requestVisibleMonths,
+    onYearTotalsObserved: handleYearTotalsObserved,
     drillDownFilter,
     fxBreakdownMonth,
     mebByLiq: rangeState.mebByLiq,
-    scrollToCurrentMonth: viewportState.scrollToCurrentMonth,
     setPlansMode: requestPlansMode,
     retryPlansModeSwitch: refreshLoadedRange,
     addCategory,

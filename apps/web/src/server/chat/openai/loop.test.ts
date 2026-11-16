@@ -27,7 +27,11 @@ import {
   EMPTY_CHAT_TURN_FILE_CONTEXT,
   type ChatTurnFileContext,
 } from "@/server/chatFiles/sessionContext";
-import { ChatModelCallTimeoutError } from "@/server/chat/openai/responses/modelCall";
+import {
+  ChatModelCallTimeoutError,
+  ChatModelResponseFailedError,
+  runOneModelCall,
+} from "@/server/chat/openai/responses/modelCall";
 import type { StoredOpenAIReplayItem } from "@/server/chat/openai/responses/replayItems";
 import {
   applyToolCallStarted,
@@ -1479,6 +1483,165 @@ test("runOpenAILoop falls back to base backoff when Retry-After exceeds the pars
     observedDelays[0] !== undefined && observedDelays[0] < 100,
     `expected near-zero base-backoff delay, observed ${String(observedDelays[0])}`,
   );
+});
+
+type StreamedResponseFixture = ReadonlyArray<OpenAI.Responses.ResponseStreamEvent>;
+
+/** A fake OpenAI client whose Nth `responses.stream` call yields the Nth fixture's events. */
+const createStreamingClient = (
+  attempts: ReadonlyArray<StreamedResponseFixture>,
+): Readonly<{ client: OpenAI; getAttemptCount: () => number }> => {
+  let attemptCount = 0;
+  const stream = async function* (): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+    const events = attempts[attemptCount];
+    attemptCount += 1;
+    if (events === undefined) {
+      throw new Error(`No stream fixture for attempt ${String(attemptCount)}`);
+    }
+    yield* events;
+  };
+  return {
+    client: { responses: { stream } } as unknown as OpenAI,
+    getAttemptCount: (): number => attemptCount,
+  };
+};
+
+const createStreamedResponse = (
+  fields: Readonly<Partial<OpenAI.Responses.Response>>,
+): OpenAI.Responses.Response =>
+  ({
+    ...createFinalResponse(""),
+    id: "resp-1",
+    model: CHAT_MODEL_ID,
+    status: "in_progress",
+    error: null,
+    incomplete_details: null,
+    usage: null,
+    ...fields,
+  } as unknown as OpenAI.Responses.Response);
+
+const RESPONSE_CREATED_EVENT: OpenAI.Responses.ResponseCreatedEvent = {
+  type: "response.created",
+  sequence_number: 0,
+  response: createStreamedResponse({}),
+};
+
+const createResponseFailedEvent = (
+  error: OpenAI.Responses.ResponseError,
+): OpenAI.Responses.ResponseFailedEvent => ({
+  type: "response.failed",
+  sequence_number: 1,
+  response: createStreamedResponse({ status: "failed", error }),
+});
+
+const RESPONSE_COMPLETED_EVENT: OpenAI.Responses.ResponseCompletedEvent = {
+  type: "response.completed",
+  sequence_number: 1,
+  response: {
+    ...createFinalResponse(""),
+    id: "resp-2",
+    model: CHAT_MODEL_ID,
+    status: "completed",
+    output: [{ id: "msg-final", ...createAssistantReplayItem("Recovered") }],
+  } as unknown as OpenAI.Responses.Response,
+};
+
+test("runOpenAILoop retries a response.failed with a transient OpenAI code and logs the code", async (): Promise<void> => {
+  const { client, getAttemptCount } = createStreamingClient([
+    [
+      RESPONSE_CREATED_EVENT,
+      createResponseFailedEvent({ code: "server_error", message: "The server had an error" }),
+    ],
+    [RESPONSE_COMPLETED_EVENT],
+  ]);
+  const retryEvents: Array<Parameters<LoopDeps["log"]>[0]> = [];
+
+  const completion = await runOpenAILoopWithDeps(
+    createLoopParams(),
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      getOpenAIClient: (): OpenAI => client,
+      runOneModelCall,
+      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
+      log: (event): void => {
+        if (event.action === "model_call_retry") retryEvents.push(event);
+      },
+    }),
+  );
+
+  assert.equal(getAttemptCount(), 2);
+  assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Recovered"));
+  assert.equal(retryEvents.length, 1);
+  assert.ok(retryEvents[0]?.action === "model_call_retry");
+  assert.equal(retryEvents[0].reason, "response_failed_server_error");
+  assert.equal(retryEvents[0].openaiErrorCode, "server_error");
+  assert.equal(
+    retryEvents[0].error,
+    "OpenAI response resp-1 failed with status failed: server_error: The server had an error",
+  );
+});
+
+test("runOpenAILoop does NOT retry a response.failed with a non-transient code and surfaces its message", async (): Promise<void> => {
+  const { client, getAttemptCount } = createStreamingClient([
+    [
+      RESPONSE_CREATED_EVENT,
+      createResponseFailedEvent({ code: "invalid_prompt", message: "Invalid prompt: flagged" }),
+    ],
+  ]);
+
+  await assert.rejects(
+    runOpenAILoopWithDeps(
+      createLoopParams(),
+      async (): Promise<void> => {},
+      createTestLoopDeps({
+        getOpenAIClient: (): OpenAI => client,
+        runOneModelCall,
+        getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
+      }),
+    ),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof ChatModelResponseFailedError);
+      assert.equal(error.openaiErrorCode, "invalid_prompt");
+      assert.equal(
+        error.message,
+        "OpenAI response resp-1 failed with status failed: invalid_prompt: Invalid prompt: flagged",
+      );
+      return true;
+    },
+  );
+
+  assert.equal(getAttemptCount(), 1);
+});
+
+test("runOpenAILoop retries a response stream that ends without a terminal event", async (): Promise<void> => {
+  const { client, getAttemptCount } = createStreamingClient([
+    [
+      RESPONSE_CREATED_EVENT,
+      { type: "response.in_progress", sequence_number: 1, response: createStreamedResponse({}) },
+    ],
+    [RESPONSE_COMPLETED_EVENT],
+  ]);
+  const retryEvents: Array<Parameters<LoopDeps["log"]>[0]> = [];
+
+  const completion = await runOpenAILoopWithDeps(
+    createLoopParams(),
+    async (): Promise<void> => {},
+    createTestLoopDeps({
+      getOpenAIClient: (): OpenAI => client,
+      runOneModelCall,
+      getModelCallRetryBackoffMs: (): ReadonlyArray<number> => [0, 0],
+      log: (event): void => {
+        if (event.action === "model_call_retry") retryEvents.push(event);
+      },
+    }),
+  );
+
+  assert.equal(getAttemptCount(), 2);
+  assert.deepEqual(completion.openaiItems.at(-1), createAssistantReplayItem("Recovered"));
+  assert.equal(retryEvents.length, 1);
+  assert.ok(retryEvents[0]?.action === "model_call_retry");
+  assert.equal(retryEvents[0].reason, "response_unfinished");
+  assert.equal(retryEvents[0].error, "OpenAI response resp-1 stream ended without a terminal event");
 });
 
 /**
