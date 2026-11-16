@@ -469,12 +469,6 @@ export const ChatTranscript = (props: Props): ReactElement => {
             <li>{t("chat.example2")}</li>
             <li>{t("chat.example3")}</li>
           </ul>
-          <p className={styles.emptyTitle}>{t("chat.attachTitle")}</p>
-          <ul className={styles.emptyList}>
-            <li>{t("chat.attachPdf")}</li>
-            <li>{t("chat.attachCsv")}</li>
-            <li>{t("chat.attachScreenshots")}</li>
-          </ul>
         </div>
       )}
       {messages.map((message, index) => {

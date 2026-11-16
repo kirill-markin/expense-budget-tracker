@@ -28,7 +28,7 @@ export const BudgetTableHeader = (props: BudgetTableHeaderProps): ReactElement =
             return (
               <th
                 key={`total-${column.year}`}
-                className={`${styles.headCell} ${styles.yearTotal}`}
+                className={`${styles.headCell} ${styles.yearTotal}${isSplitBudgetYear(column.year, currentYear, plansMode) ? "" : ` ${styles.singleYearHeader}`}`}
                 colSpan={isSplitBudgetYear(column.year, currentYear, plansMode) ? 2 : 1}
                 data-budget-year-total={column.year}
               >

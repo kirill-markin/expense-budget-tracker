@@ -128,10 +128,6 @@
   margin-bottom: 4px;
 }
 
-.emptyTitle:not(:first-child) {
-  margin-top: 12px;
-}
-
 .emptyList {
   margin: 0;
   padding-inline-start: 16px;
