@@ -1,9 +1,6 @@
 /**
  * Local Docker entrypoint: ingest raw FX rates and rebuild query-ready daily pairs.
  *
- * Schedule (UTC):
- *   - Full pipeline 08:00
- *
  * Usage:
  *     node dist/scheduler.js
  */
@@ -58,7 +55,7 @@ async function runAll(): Promise<void> {
   }
 }
 
-cron.schedule("0 8 * * *", () => {
+cron.schedule("0 16 * * *", () => {
   void runAll().catch((err: unknown) => {
     console.error("Scheduled FX pipeline failed:", err);
   });
@@ -67,7 +64,7 @@ cron.schedule("0 8 * * *", () => {
 console.log("Scheduler started. Running initial fetch...");
 runAll()
   .then(() => {
-    console.log("Initial fetch and FX rebuild complete. Entering daily schedule loop (08:00 UTC)");
+    console.log("Initial fetch and FX rebuild complete. Entering daily schedule loop (16:00 UTC)");
   })
   .catch((err: unknown) => {
     console.error("Initial fetch failed:", err);

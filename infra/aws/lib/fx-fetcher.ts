@@ -13,7 +13,7 @@ export interface FxFetcherResult {
 
 export function fxFetcher(scope: Construct, props: FxFetcherProps): FxFetcherResult {
   const schedule = new events.Rule(scope, "FxSchedule", {
-    schedule: events.Schedule.cron({ hour: "8", minute: "0" }),
+    schedule: events.Schedule.cron({ hour: "16", minute: "0" }),
   });
   schedule.addTarget(new events_targets.LambdaFunction(props.fxFetcherFn));
 
