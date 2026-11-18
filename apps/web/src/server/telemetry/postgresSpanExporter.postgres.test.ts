@@ -10,11 +10,11 @@ import test from "node:test";
 import { context, SpanStatusCode, trace } from "@opentelemetry/api";
 import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type ReadableSpan,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import {
   ATTR_GEN_AI_CONVERSATION_ID,
   ATTR_GEN_AI_OPERATION_NAME,
@@ -125,7 +125,7 @@ const recordSpans = (
   fixture: Fixture,
 ): Readonly<{ spans: ReadonlyArray<ReadableSpan>; rootName: string; childName: string }> => {
   const memoryExporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(memoryExporter)] });
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter: memoryExporter })] });
   const tracer = provider.getTracer(TELEMETRY_TRACER_NAME);
   const linkAttributes = {
     [ATTR_USER_ID]: fixture.userId,

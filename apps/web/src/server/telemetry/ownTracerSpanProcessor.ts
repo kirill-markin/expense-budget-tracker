@@ -1,4 +1,4 @@
-import type { ReadableSpan, SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan, SpanProcessor } from "@opentelemetry/sdk-trace";
 import { TELEMETRY_TRACER_NAME } from "@/server/telemetry/tracer";
 
 const isOwnTracerSpan = (span: ReadableSpan): boolean =>

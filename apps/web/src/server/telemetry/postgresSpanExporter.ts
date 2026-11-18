@@ -1,6 +1,6 @@
 import { SpanStatusCode, type Attributes } from "@opentelemetry/api";
 import { ExportResultCode, hrTimeToTimeStamp, type ExportResult } from "@opentelemetry/core";
-import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace";
 import {
   ATTR_GEN_AI_CONVERSATION_ID,
   ATTR_GEN_AI_OPERATION_NAME,
