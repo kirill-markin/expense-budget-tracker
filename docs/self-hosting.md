@@ -53,7 +53,7 @@ Services and the ports they publish to the edge:
 | `mcp` | 8082 | `apps/sql-api/Dockerfile`, `node dist/serve-mcp.js` |
 | `api` | 8083 | `apps/sql-api/Dockerfile`, default command |
 | `worker` | — | `apps/worker/Dockerfile` |
-| `postgres`, `migrate` | — | `postgres:18.6` |
+| `postgres`, `migrate` | — | `postgres:18.7` |
 
 The four `AUTH_PROXY_*` variables are set on `web` and `auth`, the two services that resolve a person's identity. `AUTH_MODE` is set on `web`, `auth` and `api`, but only `web` and `auth` resolve identity from it: `api` reads it solely to describe the right onboarding in its discovery response, alongside `PUBLIC_APP_BASE_URL`, the app origin that onboarding points at. `mcp` and `worker` read neither variable. Callers of `api`, `mcp` and `worker` authenticate with an `ApiKey` or an OAuth Bearer token, not with the edge token.
 
@@ -231,6 +231,6 @@ The stack as a whole is run end to end by [`scripts/selfhost-verify`](../scripts
 
 What it does not settle, and what the first real deployment therefore still tests: the harness mints the edge token itself, so the shape of a real Cloudflare token is unchecked; it never boots the stack under `AUTH_MODE=none` first; and it is not a browser, so the `__Host-csrf` behavior over plain http stays a manual check. Its own README lists these. The negative case of the CA above is settled: with either variable removed, the first check fails on the self-signed chain, by hand, one run each.
 
-Two things here are outside the repository and are not checked against it: the Cloudflare-specific values (header name, JWKS and issuer URL shapes, claim names, and the service-token note), and the behavior of an identity provider when you remove someone. A third, that `psql -U tracker` connects without a password from inside the `postgres:18.6` container, the harness now settles: every run reads the database that way.
+Two things here are outside the repository and are not checked against it: the Cloudflare-specific values (header name, JWKS and issuer URL shapes, claim names, and the service-token note), and the behavior of an identity provider when you remove someone. A third, that `psql -U tracker` connects without a password from inside the `postgres:18.7` container, the harness now settles: every run reads the database that way.
 
-That the bundled `tracker` role bypasses row-level security is settled: CI applies the migrations as `tracker` against the same `postgres:18.6` image, and `apps/auth/src/server/accountState.postgres.test.ts` then writes `public.users` through a definer owned by that role with no `app.user_id` set, which only passes if the definer bypasses RLS.
+That the bundled `tracker` role bypasses row-level security is settled: CI applies the migrations as `tracker` against the same `postgres:18.7` image, and `apps/auth/src/server/accountState.postgres.test.ts` then writes `public.users` through a definer owned by that role with no `app.user_id` set, which only passes if the definer bypasses RLS.

@@ -14,9 +14,10 @@
  *
  * Throws with all collected errors on misconfiguration. Skipped in dev.
  */
+import { getNumberFromEnv } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import { BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace";
 import { getAuthModeValidationErrors, isInsecureNoAuthAllowed } from "@/server/authMode";
 import { getDatabaseConnectionSettings } from "@/server/db/connectionSettings";
 import { log } from "@/server/logger";
@@ -43,7 +44,8 @@ const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
   // exactly those spans, never the Next.js request spans with their URLs.
   const processors: Array<SpanProcessor> = [
     createOwnTracerSpanProcessor(
-      new BatchSpanProcessor(new PostgresSpanExporter(getDatabaseConnectionSettings(process.env)), {
+      new BatchSpanProcessor({
+        exporter: new PostgresSpanExporter(getDatabaseConnectionSettings(process.env)),
         maxQueueSize: 2048,
         maxExportBatchSize: 256,
         scheduledDelayMillis: 5000,
@@ -53,7 +55,13 @@ const createSpanProcessors = (): ReadonlyArray<SpanProcessor> => {
   ];
   // The exporter reads the endpoint, headers and other OTEL_EXPORTER_OTLP_* settings itself.
   if (isOtlpTraceExportConfigured(process.env)) {
-    processors.push(createOwnTracerSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter())));
+    processors.push(createOwnTracerSpanProcessor(new BatchSpanProcessor({
+      exporter: new OTLPTraceExporter(),
+      maxQueueSize: getNumberFromEnv("OTEL_BSP_MAX_QUEUE_SIZE"),
+      maxExportBatchSize: getNumberFromEnv("OTEL_BSP_MAX_EXPORT_BATCH_SIZE"),
+      scheduledDelayMillis: getNumberFromEnv("OTEL_BSP_SCHEDULE_DELAY"),
+      exportTimeoutMillis: getNumberFromEnv("OTEL_BSP_EXPORT_TIMEOUT"),
+    })));
   }
   return processors;
 };

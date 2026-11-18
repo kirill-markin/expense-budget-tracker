@@ -1,6 +1,6 @@
 # --- Stage 1: Install dependencies ---
-FROM node:24.22.2-alpine AS npm
-RUN npm install --global npm@12.2.2
+FROM node:24.22.3-alpine AS npm
+RUN npm install --global npm@12.2.3
 
 FROM npm AS deps
 WORKDIR /workspace
@@ -30,7 +30,7 @@ RUN npm run build --workspace @expense-budget-tracker/agent-shared
 RUN cd apps/web && node scripts/copy-pdfjs-assets.mjs && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
-FROM node:24.22.2-alpine AS runner
+FROM node:24.22.3-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

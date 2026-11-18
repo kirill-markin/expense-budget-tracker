@@ -1,10 +1,10 @@
 import { context, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 
 /**
  * Registers a global tracer provider that keeps every ended span in memory,
@@ -14,7 +14,7 @@ import {
  */
 export const registerInMemorySpanExporterForTests = (): InMemorySpanExporter => {
   const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
   if (!context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())) {
     throw new Error("A global OpenTelemetry context manager is already registered in this test process");
   }

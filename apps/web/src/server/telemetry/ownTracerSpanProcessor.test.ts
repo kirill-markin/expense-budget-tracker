@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 
 import { createOwnTracerSpanProcessor } from "@/server/telemetry/ownTracerSpanProcessor";
 import { TELEMETRY_TRACER_NAME } from "@/server/telemetry/tracer";
 
 test("a span of a foreign tracer never reaches the wrapped processor's exporter", async (): Promise<void> => {
   const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({
-    spanProcessors: [createOwnTracerSpanProcessor(new SimpleSpanProcessor(exporter))],
+  const provider = new TracerProvider({
+    spanProcessors: [createOwnTracerSpanProcessor(new SimpleSpanProcessor({ exporter }))],
   });
 
   provider.getTracer("next.js").startSpan("GET /api/chat").end();

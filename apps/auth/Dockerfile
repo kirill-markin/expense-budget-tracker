@@ -1,5 +1,5 @@
-FROM node:24.22.2-alpine AS npm
-RUN npm install --global npm@12.2.2
+FROM node:24.22.3-alpine AS npm
+RUN npm install --global npm@12.2.3
 
 FROM npm AS deps
 
@@ -43,7 +43,7 @@ COPY packages/agent-shared/package.json packages/agent-shared/package.json
 COPY infra/aws/package.json infra/aws/package.json
 RUN npm ci --omit=dev
 
-FROM node:24.22.2-alpine
+FROM node:24.22.3-alpine
 
 WORKDIR /app/apps/auth
 

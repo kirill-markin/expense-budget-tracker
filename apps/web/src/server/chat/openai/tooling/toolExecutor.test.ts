@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SpanStatusCode } from "@opentelemetry/api";
-import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
+import type { ReadableSpan } from "@opentelemetry/sdk-trace";
 import { registerInMemorySpanExporterForTests } from "@/server/telemetry/spanRecorderForTests";
 import { runOneToolCallWithDependencies } from "./toolExecutor";
 import type { ExecutedChatToolCall } from "./tools";
