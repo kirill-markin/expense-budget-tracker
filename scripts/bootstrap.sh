@@ -101,7 +101,7 @@ READINESS_URL="https://${ALB_DNS}/api/health" READINESS_INSECURE=true \
 
 # --- Step 7: Seed exchange rates ---
 # Invoke the FX fetcher Lambda so the currency dropdown is populated immediately
-# instead of waiting for the next scheduled run (08:00 UTC).
+# instead of waiting for the next scheduled run.
 echo ""
 echo "=== Seed exchange rates ==="
 FX_FUNCTION=$(get_output FxFetcherFunctionName)

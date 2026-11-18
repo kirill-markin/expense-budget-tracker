@@ -101,7 +101,7 @@ test("production image functions have isolated roles, preserved budgets and dire
   template.hasResource("AWS::Cognito::UserPool", { DeletionPolicy: "Retain" });
   template.hasResource("AWS::KMS::Key", { DeletionPolicy: "Retain" });
   template.hasResourceProperties("AWS::Events::Rule", {
-    ScheduleExpression: "cron(0 8 * * ? *)",
+    ScheduleExpression: "cron(0 16 * * ? *)",
     Targets: [Match.objectLike({ Arn: stack.resolve(functions.fx.functionArn) })],
   });
   template.hasResourceProperties("AWS::ApiGatewayV2::Integration", {

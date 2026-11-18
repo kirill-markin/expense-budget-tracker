@@ -137,7 +137,7 @@ function convertEurRatesToUsd(ecbRates: ECBRate[]): FxRawRateRow[] {
 // per-attempt timeout grows with the requested range instead of being a single fixed
 // value, and the whole retry loop is bounded by ECB_TOTAL_BUDGET_MS, which leaves room
 // inside the 300 s Lambda for the other five fetchers (~1 s) and the daily rebuild (~13 s).
-const ECB_REQUEST_TIMEOUT_BASE_MS = 15_000;
+const ECB_REQUEST_TIMEOUT_BASE_MS = 30_000;
 
 const ECB_REQUEST_TIMEOUT_PER_DAY_MS = 20;
 
