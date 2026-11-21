@@ -516,6 +516,8 @@ gh variable set CDK_NAT_AMI_ID --body "$AMI_ID"
 gh workflow run deploy.yml --ref main
 ```
 
+Also set the same image ID as `natAmiId` in `cdk.context.local.json` for local deploys; otherwise the next local deploy puts the NAT instance back on the old image.
+
 ## Origin shared secret (Cloudflare → ALB)
 
 The ALB security group only accepts Cloudflare edge ranges, which proves a request came from *some* Cloudflare zone. An attacker can point their own Cloudflare zone at the ALB, bypass this zone's rules, and send an arbitrary `CF-Connecting-IP`, which defeats the WAF rate limits keyed on that header. A shared secret injected by a Transform Rule proves the request came from *our* zone, because Transform Rules are per-zone.
