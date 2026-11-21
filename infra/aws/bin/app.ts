@@ -53,6 +53,11 @@ if (!resendSenderEmail) {
   throw new Error("Missing required context: 'resendSenderEmail'. Set it in cdk.context.local.json (e.g. \"no-reply@mail.yourdomain.com\")");
 }
 
+const natAmiId = app.node.tryGetContext("natAmiId") as string | undefined;
+if (!natAmiId) {
+  throw new Error("Missing required context: 'natAmiId'. Set it in cdk.context.local.json, or in the CDK_NAT_AMI_ID GitHub Actions variable for CI, to the NAT instance image ID (current Amazon Linux 2023 arm64 image: aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-arm64 --query Parameter.Value --output text)");
+}
+
 // Optional context: "originSharedSecret" is the shared secret our Cloudflare zone
 // injects as the x-origin-auth header. It is deliberately not required — an absent
 // or empty value keeps the WAF origin-secret rule out of the web ACL.

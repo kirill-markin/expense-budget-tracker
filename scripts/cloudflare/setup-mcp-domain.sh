@@ -77,6 +77,7 @@ required_strings = [
     "resendSenderEmail",
     "alertEmail",
     "githubRepo",
+    "natAmiId",
 ]
 missing = [
     key for key in required_strings
