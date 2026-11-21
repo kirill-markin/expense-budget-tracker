@@ -508,7 +508,7 @@ The ALB security group only accepts Cloudflare edge ranges, which proves a reque
 - Header: `x-origin-auth` (lowercase — AWS WAF `singleHeader` names must be lowercase)
 - CDK context key: `originSharedSecret`; GitHub Actions secret: `CDK_ORIGIN_SHARED_SECRET`
 - While the value is empty, absent, or whitespace-only, the web ACL is byte-for-byte unchanged and no request is blocked
-- Once the value is set (surrounding whitespace is stripped), the WAF rule `BlockRequestsWithoutOriginSharedSecret` (priority 9, metric `expense-tracker-origin-secret-block`) blocks every request whose `x-origin-auth` header is missing or not exactly equal to the secret
+- Once the value is set (surrounding whitespace is stripped), the WAF rule `BlockRequestsWithoutOriginSharedSecret` (priority 12, metric `expense-tracker-origin-secret-block`) blocks every request whose `x-origin-auth` header is missing or not exactly equal to the secret
 - The same value is also required inside the scope-down of both `CF-Connecting-IP` rate-limit rules. A rate-based rule aggregates every request it evaluates and a later block does not un-count it, so without this a forged `CF-Connecting-IP` from a foreign zone could still exhaust a victim IP's registration or token budget before being blocked. Existing rule priorities are unchanged
 - ALB target health checks reach the targets directly without traversing the web ACL, so they are unaffected
 - The `WafOriginSecretBlockedAlarm` CloudWatch alarm notifies the alert topic, and notifies again on recovery, when this rule blocks 3 or more requests in each of 3 out of the last 5 minutes — target health checks stay green during a secret mismatch, so this alarm is the signal that the zone and the ACL diverged

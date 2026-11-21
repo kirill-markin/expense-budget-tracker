@@ -44,11 +44,11 @@ const OAUTH_TOKEN_EXCHANGE_EVALUATION_WINDOW_SECONDS = 60;
 // names must be lowercase. Requests reaching the ALB through any other Cloudflare
 // zone cannot carry it, so they are rejected once the secret is configured.
 const ORIGIN_SHARED_SECRET_HEADER = "x-origin-auth";
-// Priorities 0-10 are taken and AWS WAF priorities are non-negative integers, so the
+// Priorities 0-11 are taken and AWS WAF priorities are non-negative integers, so the
 // lowest free slot is after the rate-based rules. Evaluation order is irrelevant for
 // this rule because the rate limiters scope themselves down to requests carrying the
 // same secret, so a foreign-zone request is never aggregated before it is blocked.
-const ORIGIN_SHARED_SECRET_RULE_PRIORITY = 11;
+const ORIGIN_SHARED_SECRET_RULE_PRIORITY = 12;
 
 const noneTextTransformation = (): wafv2.CfnWebACL.TextTransformationProperty => ({
   priority: 0,
@@ -79,6 +79,9 @@ const methodIs = (method: string): wafv2.CfnWebACL.StatementProperty =>
 
 const uriPathIs = (path: string): wafv2.CfnWebACL.StatementProperty =>
   byteMatchStatement({ uriPath: {} }, "EXACTLY", path, noneTextTransformation());
+
+const uriPathStartsWith = (pathPrefix: string): wafv2.CfnWebACL.StatementProperty =>
+  byteMatchStatement({ uriPath: {} }, "STARTS_WITH", pathPrefix, noneTextTransformation());
 
 const singleHeaderField = (headerName: string): wafv2.CfnWebACL.FieldToMatchProperty => ({
   singleHeader: { Name: headerName },
@@ -159,6 +162,29 @@ const blockLabeledRequestUnless = (
   statement: andStatement([
     hasLabel(label),
     notStatement(allowedRequest),
+  ]),
+  visibilityConfig: {
+    sampledRequestsEnabled: true,
+    cloudWatchMetricsEnabled: true,
+    metricName,
+  },
+});
+
+const blockLabeledRequestWithinUnless = (
+  name: string,
+  priority: number,
+  label: string,
+  requestScope: wafv2.CfnWebACL.StatementProperty,
+  allowedRequest: wafv2.CfnWebACL.StatementProperty,
+  metricName: string,
+): wafv2.CfnWebACL.RuleProperty => ({
+  name,
+  priority,
+  action: { block: {} },
+  statement: andStatement([
+    hasLabel(label),
+    notStatement(allowedRequest),
+    requestScope,
   ]),
   visibilityConfig: {
     sampledRequestsEnabled: true,
@@ -261,6 +287,18 @@ export const buildIngressWafRules = (
     "/api/chat/transcriptions",
     "multipart/form-data",
   );
+  const allowedLargeBodyRequest = orStatement([
+    chatJsonRequest,
+    newChatJsonRequest,
+    chatTranscriptionUploadRequest,
+    chatSandboxSqlRequest(appDomain),
+  ]);
+  // The only routes that accept a request body. Everything else on the ALB, such as
+  // page URLs, the base-domain redirect, or a bare ALB hostname, is a probe target.
+  const bodyAcceptingRouteRequest = orStatement([
+    andStatement([headerIs("host", appDomain), uriPathStartsWith("/api/")]),
+    headerIs("host", authDomain),
+  ]);
   const dynamicClientRegistrationJsonRequest = postRequestToAuth(
     authDomain,
     "/oauth/register",
@@ -359,56 +397,61 @@ export const buildIngressWafRules = (
       chatTranscriptionUploadRequest,
       "expense-tracker-xss-body-reblock",
     ),
-    blockLabeledRequestUnless(
+    // Its metric is alarmed, so it covers only requests to body-accepting routes.
+    blockLabeledRequestWithinUnless(
       "BlockUnexpectedBodySizeMatches",
       2,
       "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
-      orStatement([
-        chatJsonRequest,
-        newChatJsonRequest,
-        chatTranscriptionUploadRequest,
-        chatSandboxSqlRequest(appDomain),
-      ]),
+      bodyAcceptingRouteRequest,
+      allowedLargeBodyRequest,
       "expense-tracker-size-body-reblock",
+    ),
+    // Blocks the remaining large-body matches, all probes, under an unalarmed metric.
+    blockLabeledRequestUnless(
+      "BlockUnexpectedProbeBodySizeMatches",
+      3,
+      "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body",
+      allowedLargeBodyRequest,
+      "expense-tracker-size-body-probe-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedQuerySizeMatches",
-      3,
+      4,
       "awswaf:managed:aws:core-rule-set:SizeRestrictions_QueryString",
       boundedOAuthQueryRequest,
       "expense-tracker-size-query-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedEc2MetadataSsrfBodyMatches",
-      4,
+      5,
       "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_Body",
       oauthRedirectUriBodyRequest,
       "expense-tracker-ec2-metadata-ssrf-body-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedGenericRfiBodyMatches",
-      5,
+      6,
       "awswaf:managed:aws:core-rule-set:GenericRFI_Body",
       oauthRedirectUriBodyRequest,
       "expense-tracker-generic-rfi-body-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedEc2MetadataSsrfQueryMatches",
-      6,
+      7,
       "awswaf:managed:aws:core-rule-set:EC2MetaDataSSRF_QueryArguments",
       boundedOAuthQueryRequest,
       "expense-tracker-ec2-metadata-ssrf-query-reblock",
     ),
     blockLabeledRequestUnless(
       "BlockUnexpectedGenericRfiQueryMatches",
-      7,
+      8,
       "awswaf:managed:aws:core-rule-set:GenericRFI_QueryArguments",
       boundedOAuthQueryRequest,
       "expense-tracker-generic-rfi-query-reblock",
     ),
     {
       name: "AWSManagedKnownBadInputs",
-      priority: 8,
+      priority: 9,
       overrideAction: { none: {} },
       statement: {
         managedRuleGroupStatement: {
@@ -424,7 +467,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitDynamicClientRegistration",
-      priority: 9,
+      priority: 10,
       action: { block: {} },
       statement: {
         rateBasedStatement: {
@@ -451,7 +494,7 @@ export const buildIngressWafRules = (
     },
     {
       name: "RateLimitOAuthTokenExchanges",
-      priority: 10,
+      priority: 11,
       action: { block: {} },
       statement: {
         rateBasedStatement: {

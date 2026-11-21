@@ -115,7 +115,7 @@ export function monitoring(scope: Construct, props: MonitoringProps): Monitoring
     }),
     threshold: 1,
     evaluationPeriods: 1,
-    alarmDescription: "WAF blocked a request because of an unexpected large body",
+    alarmDescription: "WAF blocked an unexpected large body sent to an app API or auth route",
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }).addAlarmAction(new cloudwatch_actions.SnsAction(alertTopic));
 
