@@ -334,6 +334,7 @@ Edit `cdk.context.local.json` with your values:
 | `resendSenderEmail` | Cognito sender address from step 4, e.g. `no-reply@mail.yourdomain.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
+| `natAmiId` | NAT instance image: the current Amazon Linux 2023 arm64 image ID from `aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-arm64 --query Parameter.Value --output text --region <region>`; see [NAT instance image](#nat-instance-image) |
 | `originSharedSecret` | Optional. Cloudflare-to-ALB shared secret — leave empty until the Transform Rule exists (see [Origin shared secret](#origin-shared-secret-cloudflare--alb)) |
 
 #### 5a. Create the MCP domain certificate and complete the context (~5-30 min wait)
@@ -490,6 +491,7 @@ After first deploy:
    - `CDK_GITHUB_REPO` — GitHub repo (e.g. `user/expense-budget-tracker`)
    - `CDK_RESEND_API_KEY_SECRET_ARN` — Secrets Manager ARN for `expense-tracker/resend-api-key`
    - `CDK_RESEND_SENDER_EMAIL` — `no-reply@mail.yourdomain.com`
+   - `CDK_NAT_AMI_ID` — NAT instance image ID, the same value as `natAmiId`
 
 3. Every push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
@@ -500,6 +502,19 @@ After first deploy:
    A push touching nothing in that list produces no Deploy run; `workflow_dispatch` runs the same workflow manually.
 
 No AWS keys stored in GitHub — uses OIDC federation.
+
+## NAT instance image
+
+The NAT instance runs the image pinned in `natAmiId` (GitHub Actions variable `CDK_NAT_AMI_ID`), so a new Amazon Linux release does not replace it on deploy. The instance installs security updates from the latest Amazon Linux 2023 release daily and restarts on Sundays at 04:00 UTC only when an installed update needs a reboot.
+
+To move to a newer image (expect about a minute without private-subnet egress while CloudFormation replaces the instance):
+
+```bash
+AMI_ID=$(aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-arm64 \
+  --query Parameter.Value --output text --profile expense-tracker --region eu-central-1)
+gh variable set CDK_NAT_AMI_ID --body "$AMI_ID"
+gh workflow run deploy.yml --ref main
+```
 
 ## Origin shared secret (Cloudflare → ALB)
 

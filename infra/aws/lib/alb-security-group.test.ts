@@ -18,6 +18,7 @@ const OPEN_TO_INTERNET_IPV6 = "::/0";
 // ELBv2 access logging resolves a region-specific log-delivery principal, so the stack
 // under test cannot be environment-agnostic.
 const TEST_ENV: cdk.Environment = { account: "123456789012", region: "eu-central-1" };
+const TEST_NAT_AMI_ID = "ami-0123456789abcdef0";
 const TEST_CERTIFICATE_ARN =
   "arn:aws:acm:eu-central-1:123456789012:certificate/00000000-0000-0000-0000-000000000000";
 
@@ -96,7 +97,7 @@ const stubFargateService = (
 const synthesizeIngressTemplate = (): Template => {
   const app = new cdk.App();
   const stack = new cdk.Stack(app, "AlbSecurityGroupTestStack", { env: TEST_ENV });
-  const net = networking(stack);
+  const net = networking(stack, { natAmiId: TEST_NAT_AMI_ID });
   const cluster = new ecs.Cluster(stack, "Cluster", { vpc: net.vpc });
   const certificate = acm.Certificate.fromCertificateArn(
     stack,
@@ -237,4 +238,32 @@ test("standalone ingress rules are attributed to the security group they open", 
     .flatMap((logicalId) => standaloneIngressRules(template, logicalId));
   assert.equal(attributed.length, standaloneCount);
   assert.deepEqual(standaloneIngressRules(template, albSecurityGroupLogicalId(template)), []);
+});
+
+test("NAT instance runs the pinned image and patches itself", (): void => {
+  const template = synthesizeIngressTemplate();
+  const instances = Object.entries(template.findResources("AWS::EC2::Instance"));
+  if (instances.length !== 1) {
+    throw new Error(`Expected exactly one NAT instance, found ${instances.length}`);
+  }
+  const [logicalId, resource] = instances[0];
+  const properties = asRecord(asRecord(resource).Properties);
+  assert.equal(properties.ImageId, TEST_NAT_AMI_ID);
+  assert.match(logicalId, /^VpcpublicSubnet1NatInstance[0-9A-F]{8}[0-9a-f]{16}$/);
+
+  const userData = optionalString(asRecord(properties.UserData)["Fn::Base64"], "UserData");
+  assert.ok(userData !== undefined, "Expected literal NAT instance user data");
+  assert.ok(userData.includes("echo latest > /etc/dnf/vars/releasever"));
+  assert.ok(userData.includes("systemctl enable --now dnf-automatic.timer"));
+  assert.ok(userData.includes("OnCalendar=Sun *-*-* 04:00:00 UTC"));
+  assert.ok(userData.includes("ExecStart=/bin/sh -c 'dnf needs-restarting -r || systemctl reboot'"));
+  assert.ok(userData.includes("systemctl enable --now nat-kernel-restart.timer"));
+
+  const natRoutes = Object.values(template.findResources("AWS::EC2::Route"))
+    .map((route) => asRecord(asRecord(route).Properties))
+    .filter((route) => route.InstanceId !== undefined);
+  assert.ok(natRoutes.length > 0, "Expected private subnet routes through the NAT instance");
+  for (const route of natRoutes) {
+    assert.deepEqual(route.InstanceId, { Ref: logicalId });
+  }
 });

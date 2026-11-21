@@ -140,6 +140,7 @@ jobs:
             "resendSenderEmail": "${{ vars.CDK_RESEND_SENDER_EMAIL }}",
             "alertEmail": "${{ vars.CDK_ALERT_EMAIL }}",
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
+            "natAmiId": "${{ vars.CDK_NAT_AMI_ID }}",
             "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}",
             "originSharedSecret": "${{ secrets.CDK_ORIGIN_SHARED_SECRET }}"
           }

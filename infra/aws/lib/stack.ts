@@ -32,7 +32,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // --- Context parameters (domainName, certificateArn, region validated in bin/app.ts) ---
+    // --- Context parameters (domainName, certificateArn, region, natAmiId validated in bin/app.ts) ---
     const baseDomain = this.node.tryGetContext("domainName") as string;
     const alertEmail = this.node.tryGetContext("alertEmail") as string;
     const certificateArn = this.node.tryGetContext("certificateArn") as string;
@@ -43,6 +43,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const originSharedSecret = this.node.tryGetContext("originSharedSecret") as string | undefined ?? "";
     const resendApiKeySecretArn = getOptionalContextValue(this, "resendApiKeySecretArn");
     const resendSenderEmail = getOptionalContextValue(this, "resendSenderEmail");
+    const natAmiId = this.node.tryGetContext("natAmiId") as string;
 
     const appDomain = `app.${baseDomain}`;
     const authDomain = `auth.${baseDomain}`;
@@ -52,7 +53,7 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       this, "Certificate", certificateArn,
     );
 
-    const net = networking(this);
+    const net = networking(this, { natAmiId });
     const dbResult = database(this, { vpc: net.vpc, dbSg: net.dbSg });
     const sec = secrets(this);
     const chatFiles = chatFilesBucket(this, { appDomain });

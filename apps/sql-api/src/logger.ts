@@ -1,12 +1,38 @@
 import type { AgentToolName } from "@expense-budget-tracker/agent-shared/agent-tools";
 import type { SqlPolicyError } from "@expense-budget-tracker/agent-shared/sql-policy";
 import type { AdminReaderEvent, AdminReaderRowCounts } from "./adminReader.js";
+import { DatabaseSecretTimeoutError } from "./config.js";
 
-export type SafeErrorType = "error" | "type_error" | "range_error" | "non_error";
+export type SafeErrorType =
+  | "error"
+  | "type_error"
+  | "range_error"
+  | "non_error"
+  | "database_secret_timeout"
+  | "database_connection_timeout";
+
+// pg and pg-pool raise these as plain Error instances, so the message is the
+// only thing that identifies a connection timeout.
+// pg-pool: a new client did not connect within connectionTimeoutMillis.
+const PG_POOL_NEW_CLIENT_TIMEOUT_MESSAGE = "Connection terminated due to connection timeout";
+// pg-pool: no pooled client became free within connectionTimeoutMillis.
+const PG_POOL_ACQUIRE_TIMEOUT_MESSAGE = "timeout exceeded when trying to connect";
+// pg client: its own connectionTimeoutMillis timer destroyed the socket.
+const PG_CLIENT_CONNECT_TIMEOUT_MESSAGE = "timeout expired";
+
+const PG_CONNECTION_TIMEOUT_MESSAGES: ReadonlySet<string> = new Set([
+  PG_POOL_NEW_CLIENT_TIMEOUT_MESSAGE,
+  PG_POOL_ACQUIRE_TIMEOUT_MESSAGE,
+  PG_CLIENT_CONNECT_TIMEOUT_MESSAGE,
+]);
 
 export const getSafeErrorType = (error: unknown): SafeErrorType => {
+  if (error instanceof DatabaseSecretTimeoutError) return "database_secret_timeout";
   if (error instanceof TypeError) return "type_error";
   if (error instanceof RangeError) return "range_error";
+  if (error instanceof Error && PG_CONNECTION_TIMEOUT_MESSAGES.has(error.message)) {
+    return "database_connection_timeout";
+  }
   if (error instanceof Error) return "error";
   return "non_error";
 };

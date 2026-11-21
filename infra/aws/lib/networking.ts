@@ -1,7 +1,13 @@
+import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
+import { createHash } from "crypto";
 import * as path from "path";
 import * as fs from "fs";
+
+export interface NetworkingProps {
+  natAmiId: string;
+}
 
 export interface NetworkingResult {
   vpc: ec2.Vpc;
@@ -12,15 +18,57 @@ export interface NetworkingResult {
   migrateSg: ec2.SecurityGroup;
 }
 
-export function networking(scope: Construct): NetworkingResult {
+// Amazon Linux 2023 locks its repositories to the image's release, so without the
+// releasever override dnf-automatic would find no updates on a pinned image.
+// `dnf needs-restarting -r` exits 1 only when an installed update needs a reboot.
+const NAT_SELF_UPDATE_COMMANDS: string[] = [
+  "echo latest > /etc/dnf/vars/releasever",
+  "dnf install -y dnf-automatic dnf-plugins-core",
+  "sed -i -e 's/^upgrade_type *=.*/upgrade_type = security/' -e 's/^apply_updates *=.*/apply_updates = yes/' /etc/dnf/automatic.conf",
+  "systemctl enable --now dnf-automatic.timer",
+  [
+    "cat > /etc/systemd/system/nat-kernel-restart.service <<'EOF'",
+    "[Unit]",
+    "Description=Restart the NAT instance when an installed update needs a reboot",
+    "[Service]",
+    "Type=oneshot",
+    "ExecStart=/bin/sh -c 'dnf needs-restarting -r || systemctl reboot'",
+    "EOF",
+  ].join("\n"),
+  [
+    "cat > /etc/systemd/system/nat-kernel-restart.timer <<'EOF'",
+    "[Unit]",
+    "Description=Weekly NAT instance restart check",
+    "[Timer]",
+    "OnCalendar=Sun *-*-* 04:00:00 UTC",
+    "[Install]",
+    "WantedBy=timers.target",
+    "EOF",
+  ].join("\n"),
+  "systemctl daemon-reload",
+  "systemctl enable --now nat-kernel-restart.timer",
+];
+
+export function networking(scope: Construct, props: NetworkingProps): NetworkingResult {
   // --- VPC ---
   // NAT instance (t4g.small ~$12/mo) instead of managed NAT Gateway (~$35/mo).
   // Trade-off: no HA, no auto-recovery, limited bandwidth (~5 Gbps burst).
   // Acceptable for a pet project where only the Lambda FX fetcher and ECS tasks use NAT
   // (a few KB/day + ECR image pulls). To switch to managed NAT Gateway, remove
   // natGatewayProvider and keep only: natGateways: 1,
+  // The image is pinned through the `natAmiId` context so a new Amazon Linux release does
+  // not replace the instance on deploy; instead the instance installs security updates daily
+  // and restarts on Sundays at 04:00 UTC only when one of them needs a reboot. Each
+  // replacement, on an image or user data change, cuts private-subnet egress for about a minute.
+  const natUserData = ec2.UserData.forLinux();
+  natUserData.addCommands(
+    ...ec2.NatInstanceProviderV2.DEFAULT_USER_DATA_COMMANDS,
+    ...NAT_SELF_UPDATE_COMMANDS,
+  );
   const natProvider = ec2.NatProvider.instanceV2({
     instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
+    machineImage: ec2.MachineImage.genericLinux({ [cdk.Stack.of(scope).region]: props.natAmiId }),
+    userData: natUserData,
     defaultAllowedTraffic: ec2.NatTrafficDirection.OUTBOUND_ONLY,
   });
   const vpc = new ec2.Vpc(scope, "Vpc", {
@@ -37,6 +85,20 @@ export function networking(scope: Construct): NetworkingResult {
     ec2.Port.allTraffic(),
     "Allow VPC traffic to NAT instance",
   );
+  // An EBS-backed instance only stops and starts on a UserData change, and cloud-init does
+  // not rerun the script. NatInstanceProviderV2 has no userDataCausesReplacement option, so
+  // this applies the same mechanism ec2.Instance uses for it: a user data digest suffix on
+  // the logical ID makes CloudFormation replace the instance.
+  for (const natInstance of natProvider.gatewayInstances) {
+    const stack = cdk.Stack.of(natInstance);
+    const userDataDigest = createHash("md5")
+      .update(JSON.stringify(stack.resolve(natInstance.userData.render())))
+      .digest("hex")
+      .slice(0, 16);
+    natInstance.instance.overrideLogicalId(
+      `${stack.getLogicalId(natInstance.instance)}${userDataDigest}`,
+    );
+  }
 
   // Keeps chat file object traffic off the single NAT instance: a gateway
   // endpoint routes S3 requests from the private subnets directly to S3.
