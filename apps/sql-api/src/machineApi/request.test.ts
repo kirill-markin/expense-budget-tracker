@@ -188,6 +188,9 @@ test("an unauthenticated request still answers 401 while the database is down", 
     loadTrustedUserIdentityBeforeDeadline: async () => {
       throw new Error("pool exhausted");
     },
+    recordOpenDayOncePerDay: async () => {
+      throw new Error("recordOpenDayOncePerDay should not be called");
+    },
   });
 
   const response = await handler(createEvent({ path: "/v1/me", resource: "/me" }));
@@ -195,4 +198,22 @@ test("an unauthenticated request still answers 401 while the database is down", 
   assert.equal(response.statusCode, 401);
   const payload = JSON.parse(response.body) as { error: { code: string } };
   assert.equal(payload.error.code, "missing_api_key");
+});
+
+test("discovery routes answer an authenticated request without recording an open day", async (): Promise<void> => {
+  const handler = createMachineApiHandler({
+    loadTrustedUserIdentityBeforeDeadline: async () => {
+      throw new Error("loadTrustedUserIdentityBeforeDeadline should not be called");
+    },
+    recordOpenDayOncePerDay: async () => {
+      throw new Error("recordOpenDayOncePerDay should not be called");
+    },
+  });
+
+  const responses = await Promise.all(
+    ["/", "/openapi.json"].map((path) =>
+      handler(createAuthenticatedEvent({ path: `/v1${path}`, resource: path }))),
+  );
+
+  assert.deepEqual(responses.map((response) => response.statusCode), [200, 200]);
 });

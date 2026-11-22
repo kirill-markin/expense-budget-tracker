@@ -35,6 +35,20 @@ export class McpAuthenticationError extends Error {
   }
 }
 
+/**
+ * Tags a failed open-day write so the handler logs it as its own operation.
+ * The original error stays reachable for deadline classification.
+ */
+export class McpOpenDayRecordingError extends Error {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super("Recording the MCP open day failed", { cause: originalError });
+    this.name = "McpOpenDayRecordingError";
+    this.originalError = originalError;
+  }
+}
+
 export type McpAuthDependencies = Readonly<{
   queryBeforeDeadline: typeof queryBeforeDeadline;
   loadTrustedUserIdentityBeforeDeadline: typeof loadTrustedUserIdentityBeforeDeadline;
@@ -122,7 +136,11 @@ export const authenticateMcpAccessTokenWithDependencies = async (
   ) {
     throw new McpAuthenticationError();
   }
-  await dependencies.recordOpenDayOncePerDay(identity.userId, "mcp", deadline);
+  try {
+    await dependencies.recordOpenDayOncePerDay(identity.userId, "mcp", deadline);
+  } catch (error) {
+    throw new McpOpenDayRecordingError(error);
+  }
 
   return {
     connectionId: row.connection_id,
