@@ -1,7 +1,7 @@
 "use client";
 
 import { max, scaleBand, scaleLinear } from "d3";
-import { useCallback, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactElement, type RefCallback } from "react";
+import { useCallback, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactElement, type RefCallback } from "react";
 
 import type { NewReturningBucket } from "@/server/reports/newReturning";
 import type { ReportPeriod } from "@/server/reports/period";
@@ -84,6 +84,19 @@ export const NewReturningBarChart = (props: Props): ReactElement => {
   // Edge labels shift inward so they never leave the SVG.
   const labelCenter = (barCenter: number): number =>
     Math.min(Math.max(barCenter, labelWidth / 2), width - labelWidth / 2);
+  const labelCenterAt = (index: number): number => {
+    const bucket = buckets[index];
+    const barX = bucket === undefined ? undefined : x(bucket.bucketStart);
+    if (barX === undefined) throw new Error(`${title} chart has no band for bar ${index}`);
+    return labelCenter(barX + x.bandwidth() / 2);
+  };
+  const lastIndex = buckets.length - 1;
+  // The inward shift can push the last label onto the one before it; drop it then.
+  const showLabel = (index: number): boolean =>
+    index % labelEvery === 0
+    && (index !== lastIndex
+      || index < labelEvery
+      || labelCenterAt(index) - labelCenterAt(index - labelEvery) >= labelWidth + LABEL_GAP);
   const baseline = y(0);
 
   const showTooltip = (index: number, target: SVGRectElement): void => {
@@ -163,7 +176,7 @@ export const NewReturningBarChart = (props: Props): ReactElement => {
                   y={returningTop}
                   width={x.bandwidth()}
                   height={baseline - returningTop}
-                  fill="var(--accent)"
+                  fill="var(--chart-returning)"
                 />
                 <rect
                   className={fadeClass}
@@ -171,9 +184,9 @@ export const NewReturningBarChart = (props: Props): ReactElement => {
                   y={newTop}
                   width={x.bandwidth()}
                   height={Math.max(0, returningTop - newTop - gap)}
-                  fill="var(--muted)"
+                  fill="var(--chart-new)"
                 />
-                {index % labelEvery === 0 && (
+                {showLabel(index) && (
                   <text
                     x={labelCenter(barX + x.bandwidth() / 2)}
                     y={baseline + AXIS_GAP + FONT_SIZE}
@@ -198,6 +211,9 @@ export const NewReturningBarChart = (props: Props): ReactElement => {
                   onMouseEnter={(event: MouseEvent<SVGRectElement>): void => showTooltip(index, event.currentTarget)}
                   onFocus={(event: FocusEvent<SVGRectElement>): void => showTooltip(index, event.currentTarget)}
                   onBlur={hideTooltip}
+                  onKeyDown={(event: KeyboardEvent<SVGRectElement>): void => {
+                    if (event.key === "Escape") hideTooltip();
+                  }}
                 />
               </g>
             );

@@ -25,11 +25,11 @@
 }
 
 .newSwatch {
-  background: var(--muted);
+  background: var(--chart-new);
 }
 
 .returningSwatch {
-  background: var(--accent);
+  background: var(--chart-returning);
 }
 
 /* Time runs left to right in every locale, so the plot and its tooltip offset stay LTR. */

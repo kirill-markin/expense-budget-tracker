@@ -21,6 +21,9 @@ const PERIOD_OPTIONS: ReadonlyArray<Readonly<{ value: ReportPeriod; label: strin
   { value: "month", label: "Months" },
 ];
 
+/** Sent with every submit; unchecked boxes send nothing, so it tells an empty selection from a bare URL. */
+export const SURFACES_SET_PARAM = "surfaces_set";
+
 const SURFACE_LABELS: Readonly<Record<ActivitySurface, string>> = { web: "Web", api: "API", mcp: "MCP" };
 
 /** A plain GET form: every filter lives in the URL, so it survives reload and needs no client state. */
@@ -46,6 +49,7 @@ export const FilterBar = (props: Props): ReactElement => {
       </label>
       <fieldset className={styles.surfaces}>
         <legend>Surfaces · Who opened the app</legend>
+        <input type="hidden" name={SURFACES_SET_PARAM} value="1" />
         <div className={styles.checkboxes}>
           {ACTIVITY_SURFACES.map((surface: ActivitySurface) => (
             <label key={surface} className={styles.checkbox}>

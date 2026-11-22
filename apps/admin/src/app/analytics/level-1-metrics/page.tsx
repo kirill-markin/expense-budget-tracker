@@ -10,7 +10,7 @@ import {
   type ReportPeriod,
 } from "@/server/reports/period";
 import { ACTIVITY_SURFACES, type ActivitySurface } from "@/server/reports/usersList";
-import { FilterBar } from "@/ui/FilterBar";
+import { FilterBar, SURFACES_SET_PARAM } from "@/ui/FilterBar";
 import { MetricCard, MetricEmptyState, NewReturningDataTable } from "@/ui/MetricCard";
 import { NewReturningBarChart } from "@/ui/NewReturningBarChart";
 
@@ -57,9 +57,15 @@ const readSingle = (params: SearchParams, name: string): Parsed<string | undefin
 const isActivitySurface = (value: string): value is ActivitySurface =>
   ACTIVITY_SURFACES.some((surface: ActivitySurface): boolean => surface === value);
 
-/** No `surface` parameter means every surface; the result keeps the canonical surface order. */
+/**
+ * No `surface` parameter means every surface, unless the filter form's marker shows that the
+ * person unchecked them all. The result keeps the canonical surface order.
+ */
 const parseSurfaces = (params: SearchParams): Parsed<ReadonlyArray<ActivitySurface>> => {
   const raw = params.surface;
+  if (raw === undefined && params[SURFACES_SET_PARAM] !== undefined) {
+    return { ok: false, error: { parameter: "surface", value: "", message: "select at least one surface" } };
+  }
   if (raw === undefined) return { ok: true, value: ACTIVITY_SURFACES };
   const values: ReadonlyArray<string> = typeof raw === "string" ? [raw] : raw;
   const unknown = values.find((value: string): boolean => !isActivitySurface(value));
