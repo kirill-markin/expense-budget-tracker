@@ -44,9 +44,14 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
     const resendApiKeySecretArn = getOptionalContextValue(this, "resendApiKeySecretArn");
     const resendSenderEmail = getOptionalContextValue(this, "resendSenderEmail");
     const natAmiId = this.node.tryGetContext("natAmiId") as string;
+    const adminEmails = getOptionalContextValue(this, "adminEmails");
+    if (adminEmails === undefined) {
+      throw new Error("adminEmails is required: set it to the comma list of emails allowed into the admin app (CDK_ADMIN_EMAILS in CI)");
+    }
 
     const appDomain = `app.${baseDomain}`;
     const authDomain = `auth.${baseDomain}`;
+    const adminDomain = `admin.${baseDomain}`;
 
     // --- TLS Certificate (pre-created Cloudflare Origin Cert imported into ACM) ---
     const certificate = acm.Certificate.fromCertificateArn(
@@ -101,6 +106,8 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       userPoolClientId: authResult.userPoolClient.userPoolClientId,
       appDomain,
       authDomain,
+      adminDomain,
+      adminEmails,
       demoEmailDostip,
       demoPasswordSecret: demoEmailDostip !== "" ? sec.demoPasswordSecret : null,
     });
@@ -110,9 +117,11 @@ export class ExpenseBudgetTrackerStack extends cdk.Stack {
       certificate,
       webService: comp.webService,
       authService: comp.authService,
+      adminService: comp.adminService,
       baseDomain,
       appDomain,
       authDomain,
+      adminDomain,
       originSharedSecret,
     });
 

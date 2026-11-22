@@ -110,9 +110,11 @@ const synthesizeIngressTemplate = (): Template => {
     certificate,
     webService: stubFargateService(stack, cluster, net.ecsSg, "Web", 8080),
     authService: stubFargateService(stack, cluster, net.ecsSg, "Auth", 8081),
+    adminService: stubFargateService(stack, cluster, net.ecsSg, "Admin", 8080),
     baseDomain: "example.com",
     appDomain: "app.example.com",
     authDomain: "auth.example.com",
+    adminDomain: "admin.example.com",
     originSharedSecret: "test-origin-secret",
   });
   return Template.fromStack(stack);
@@ -266,4 +268,46 @@ test("NAT instance runs the pinned image and patches itself", (): void => {
   for (const route of natRoutes) {
     assert.deepEqual(route.InstanceId, { Ref: logicalId });
   }
+});
+
+test("AdminRoute forwards admin.<domain> to the target group the admin service registers in", (): void => {
+  const template = synthesizeIngressTemplate();
+  const adminRules = Object.values(template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"))
+    .map((resource) => asRecord(asRecord(resource).Properties))
+    .filter((properties) => properties.Priority === 15);
+  if (adminRules.length !== 1) {
+    throw new Error(`Expected exactly one listener rule at priority 15, found ${adminRules.length}`);
+  }
+  const rule = adminRules[0];
+  assert.deepEqual(rule.Conditions, [
+    { Field: "host-header", HostHeaderConfig: { Values: ["admin.example.com"] } },
+  ]);
+
+  const actions = rule.Actions;
+  if (!Array.isArray(actions) || actions.length !== 1) {
+    throw new Error(`Expected one AdminRoute action, got ${JSON.stringify(actions)}`);
+  }
+  const action = asRecord(actions[0]);
+  assert.equal(action.Type, "forward");
+  const targetGroupLogicalId = asRecord(action.TargetGroupArn).Ref;
+  if (typeof targetGroupLogicalId !== "string") {
+    throw new Error(`Expected a Ref to the admin target group, got ${JSON.stringify(action.TargetGroupArn)}`);
+  }
+
+  const targetGroup = asRecord(
+    asRecord(template.findResources("AWS::ElasticLoadBalancingV2::TargetGroup")[targetGroupLogicalId]).Properties,
+  );
+  assert.equal(targetGroup.Port, 8080);
+  assert.equal(targetGroup.TargetType, "ip");
+  assert.equal(targetGroup.HealthCheckPath, "/health");
+
+  const adminServices = Object.entries(template.findResources("AWS::ECS::Service"))
+    .filter(([logicalId]) => logicalId.startsWith("AdminService"));
+  if (adminServices.length !== 1) {
+    throw new Error(`Expected exactly one admin service, found ${adminServices.length}`);
+  }
+  const loadBalancers = asRecord(asRecord(adminServices[0][1]).Properties).LoadBalancers;
+  assert.deepEqual(loadBalancers, [
+    { ContainerName: "app", ContainerPort: 8080, TargetGroupArn: { Ref: targetGroupLogicalId } },
+  ]);
 });

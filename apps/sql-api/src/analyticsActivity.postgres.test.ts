@@ -1,7 +1,8 @@
 /**
  * Postgres-backed check of the activity-day analytics: the app records open
  * days through analytics.record_user_open_day, and every ledger insert made in
- * a person's context records that person's track day.
+ * a person's context records that person's track day, including AI inserts that
+ * run as api_sql_executor, while an insert of zero rows records none.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,9 @@ const postgresTestSkip: boolean | string = databaseUrlsMissing && process.env.CI
 
 const INSERT_LEDGER_ENTRY_SQL = `INSERT INTO public.ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id)
   VALUES ($1, now(), 'Cash', -1, 'USD', 'spend', $2)`;
+const INSERT_ZERO_LEDGER_ENTRIES_SQL = `INSERT INTO public.ledger_entries (event_id, ts, account_id, amount, currency, kind, workspace_id)
+  SELECT $1::text, now(), 'Cash', -1, 'USD', 'spend', $2::text WHERE false`;
+const TRACK_DAYS_SQL = "SELECT activity_date::text AS activity_date FROM analytics.user_track_days WHERE user_id = $1";
 
 const onlyRow = <T extends pg.QueryResultRow>(result: pg.QueryResult<T>, label: string): T => {
   const [row, ...rest] = result.rows;
@@ -59,6 +63,14 @@ test(
       let today: string;
       let functionOid: number;
       try {
+        // The zero-row insert commits alone: app cannot read analytics tables and the owner sees only committed rows.
+        await appClient.query("BEGIN");
+        await appClient.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+        await appClient.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+        await appClient.query(INSERT_ZERO_LEDGER_ENTRIES_SQL, [`analytics-activity-event-zero-${suffix}`, workspaceId]);
+        await appClient.query("COMMIT");
+        assert.deepEqual(await readDates(ownerPool, TRACK_DAYS_SQL, userId), []);
+
         // One transaction keeps now(), and so the UTC day, the same for every statement.
         await appClient.query("BEGIN");
         await appClient.query("SELECT set_config('app.user_id', $1, true)", [userId]);
@@ -67,8 +79,6 @@ test(
           await appClient.query<{ today: string }>("SELECT (now() AT TIME ZONE 'UTC')::date::text AS today"),
           "UTC today",
         ).today;
-        await appClient.query(INSERT_LEDGER_ENTRY_SQL, [`analytics-activity-event-1-${suffix}`, workspaceId]);
-        await appClient.query(INSERT_LEDGER_ENTRY_SQL, [`analytics-activity-event-2-${suffix}`, workspaceId]);
         await appClient.query("SELECT analytics.record_user_open_day('web')");
         await appClient.query("SELECT analytics.record_user_open_day('web')");
         // The role switch below loses schema USAGE, so the function is resolved while still app.
@@ -82,6 +92,10 @@ test(
           "api_sql_executor EXECUTE privilege",
         );
         assert.equal(privilege.allowed, false);
+        // AI inserts run as api_sql_executor, which has no USAGE on the analytics schema.
+        // Both inserts run here, so the expected track day can come only from this path.
+        await appClient.query(INSERT_LEDGER_ENTRY_SQL, [`analytics-activity-event-1-${suffix}`, workspaceId]);
+        await appClient.query(INSERT_LEDGER_ENTRY_SQL, [`analytics-activity-event-2-${suffix}`, workspaceId]);
         await appClient.query("COMMIT");
 
         await assert.rejects(
@@ -95,10 +109,7 @@ test(
         appClient.release();
       }
 
-      assert.deepEqual(
-        await readDates(ownerPool, "SELECT activity_date::text AS activity_date FROM analytics.user_track_days WHERE user_id = $1", userId),
-        [today],
-      );
+      assert.deepEqual(await readDates(ownerPool, TRACK_DAYS_SQL, userId), [today]);
       assert.deepEqual(
         await readDates(
           ownerPool,

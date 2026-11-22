@@ -1,0 +1,57 @@
+@layer tokens, reset, base;
+
+@import "../../../web/src/app/styles/tokens.css" layer(tokens);
+@import "../../../web/src/app/styles/reset.css" layer(reset);
+
+@layer base {
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+
+  .admin-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 24px;
+    padding-block: 12px;
+    padding-inline: 16px;
+    border-block-end: 1px solid var(--soft-border);
+  }
+
+  .admin-brand {
+    font-weight: 700;
+  }
+
+  .admin-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .admin-account {
+    margin-inline-start: auto;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+
+  .admin-main {
+    padding-block: 24px;
+    padding-inline: 16px;
+  }
+}

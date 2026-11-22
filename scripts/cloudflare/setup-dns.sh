@@ -390,6 +390,15 @@ reconcile_proxied_cname "auth" "$AUTH_FQDN" "$ALB_DNS"
 
 echo "Auth DNS record set: auth -> ${ALB_DNS} (Cloudflare proxied)"
 
+# --- Admin subdomain CNAME (admin.* → same ALB, host-based routing) ---
+ADMIN_FQDN="admin.${ZONE_NAME}"
+echo ""
+echo "Setting up admin subdomain CNAME: ${ADMIN_FQDN} -> ${ALB_DNS}..."
+
+reconcile_proxied_cname "admin" "$ADMIN_FQDN" "$ALB_DNS"
+
+echo "Admin DNS record set: admin -> ${ALB_DNS} (Cloudflare proxied)"
+
 # --- Root domain → ALB redirect (domain.com → app.domain.com) ---
 # By default, the ALB returns a 302 redirect to app.* for the root domain.
 # If you serve your own site on the root domain, skip this section —
@@ -498,7 +507,7 @@ echo "SSL/TLS mode set to Full (Strict)."
 echo ""
 echo "Setting up cache bypass rule for app..."
 
-CACHE_EXPRESSION="(http.host eq \"${APP_FQDN}\" or http.host eq \"${AUTH_FQDN}\" or http.host eq \"${MCP_FQDN}\" or http.host eq \"${ZONE_NAME}\")"
+CACHE_EXPRESSION="(http.host eq \"${APP_FQDN}\" or http.host eq \"${AUTH_FQDN}\" or http.host eq \"${ADMIN_FQDN}\" or http.host eq \"${MCP_FQDN}\" or http.host eq \"${ZONE_NAME}\")"
 CACHE_RULE_DESCRIPTION="Bypass cache for app — fully dynamic content"
 
 CACHE_RULESET=$(cloudflare_optional_get_request \
@@ -514,10 +523,10 @@ CACHE_RESULT=$(cloudflare_api_request \
   "$CACHE_PAYLOAD")
 
 echo "$CACHE_RESULT" | assert_required_cloudflare_success \
-  "Could not set Cloudflare cache bypass rule for ${APP_FQDN}, ${AUTH_FQDN}, ${MCP_FQDN}, and ${ZONE_NAME}." \
+  "Could not set Cloudflare cache bypass rule for ${APP_FQDN}, ${AUTH_FQDN}, ${ADMIN_FQDN}, ${MCP_FQDN}, and ${ZONE_NAME}." \
   "Check token permission Zone:Cache Rules:Edit, or manually add a Cache Rules bypass for expression: ${CACHE_EXPRESSION}"
 
-echo "Cache bypass rule set for ${APP_FQDN}, ${AUTH_FQDN}, ${MCP_FQDN}, and ${ZONE_NAME}."
+echo "Cache bypass rule set for ${APP_FQDN}, ${AUTH_FQDN}, ${ADMIN_FQDN}, ${MCP_FQDN}, and ${ZONE_NAME}."
 
 # --- API Gateway custom domain CNAME (optional) ---
 # Created only when apiCertificateArn is set in CDK context (custom domain for machine clients).

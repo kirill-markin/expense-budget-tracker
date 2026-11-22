@@ -41,7 +41,8 @@ Browser → Cloudflare (CDN + DDoS + edge SSL) → ALB (Origin Cert) → ECS Far
                                                   │                Lambda (FX rates)
                                                   │
                                                   ├─ domain.com ──────▶ 302 redirect to app.*
-                                                  └─ app.* ───────────▶ web:8080 (Cognito Email OTP)
+                                                  ├─ app.* ───────────▶ web:8080 (Cognito Email OTP)
+                                                  └─ admin.* ─────────▶ admin:8080 (Cognito session + ADMIN_EMAILS)
 
 Machine → Cloudflare → API Gateway (REST API) → Lambda Authorizer → Machine API Lambda → RDS
                          │
@@ -83,10 +84,11 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - Domain registration
 - DNS CNAME `@` root domain (proxied) pointing to ALB — redirects to `app.*`
 - DNS CNAME `app.*` (proxied) pointing to ALB — authenticated app
+- DNS CNAME `admin.*` (proxied) pointing to ALB — [admin app](../../docs/admin-app.md)
 - Origin Certificate for ALB HTTPS (imported into ACM)
 - Public ACM certificates for the regional `api.*` and `mcp.*` API Gateway domains
 - Proxied DNS CNAMEs for `api.*` and `mcp.*`
-- Cache bypass for root, `app.*`, `auth.*`, and `mcp.*`
+- Cache bypass for root, `app.*`, `auth.*`, `admin.*`, and `mcp.*`
 - Per-IP MCP rate limiting at 20 requests per 10 seconds with a 10-second block
 - Edge SSL, DDoS protection (automatic with proxied DNS)
 
@@ -333,6 +335,7 @@ Edit `cdk.context.local.json` with your values:
 | `resendApiKeySecretArn` | Secrets Manager ARN for `expense-tracker/resend-api-key` from step 4 |
 | `resendSenderEmail` | Cognito sender address from step 4, e.g. `no-reply@mail.yourdomain.com` |
 | `alertEmail` | Email for CloudWatch alarm notifications |
+| `adminEmails` | Comma list of emails allowed into the [admin app](../../docs/admin-app.md) |
 | `githubRepo` | GitHub repo for CI/CD, e.g. `user/expense-budget-tracker` |
 | `natAmiId` | NAT instance image: the current Amazon Linux 2023 arm64 image ID from `aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-arm64 --query Parameter.Value --output text --region <region>`; see [NAT instance image](#nat-instance-image) |
 | `originSharedSecret` | Optional. Cloudflare-to-ALB shared secret — leave empty until the Transform Rule exists (see [Origin shared secret](#origin-shared-secret-cloudflare--alb)) |
@@ -406,7 +409,7 @@ After deploy completes, **create the DNS record** pointing to the ALB and config
 )
 ```
 
-The script creates proxied CNAMEs for the ALB, `api.*`, and `mcp.*`; sets SSL/TLS to Full (Strict); and bypasses cache for dynamic hosts. The AWS WAF attached to the auth ALB separately rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP supplied in `CF-Connecting-IP`.
+The script creates proxied CNAMEs to the ALB for the root, `app.*`, `auth.*`, and `admin.*`, plus `api.*` and `mcp.*`; sets SSL/TLS to Full (Strict); and bypasses cache for dynamic hosts. The AWS WAF attached to the auth ALB separately rate-limits the exact anonymous `POST auth.*/oauth/register` endpoint by the real client IP supplied in `CF-Connecting-IP`.
 
 Configure the Cloudflare Free rate-limit rule for the public MCP endpoint:
 
@@ -492,6 +495,7 @@ After first deploy:
    - `CDK_RESEND_API_KEY_SECRET_ARN` — Secrets Manager ARN for `expense-tracker/resend-api-key`
    - `CDK_RESEND_SENDER_EMAIL` — `no-reply@mail.yourdomain.com`
    - `CDK_NAT_AMI_ID` — NAT instance image ID, the same value as `natAmiId`
+   - `CDK_ADMIN_EMAILS` — comma list of admin emails, the same value as `adminEmails`
 
 3. Every push to `main` that touches the `paths:` list in `.github/workflows/deploy.yml` will automatically:
    - `cdk deploy` — update infrastructure, Lambda, and IAM permissions
@@ -532,7 +536,7 @@ The ALB security group only accepts Cloudflare edge ranges, which proves a reque
 
 Generate the value with a shell-safe generator, for example `openssl rand -hex 32`.
 
-> **Warning:** activate in this order. Setting the secret before the Cloudflare Transform Rule exists blocks all public traffic and takes the whole site down. The WAF rule is host-agnostic, so the Transform Rule must cover every proxied hostname routed to the ALB: `app.*`, `auth.*` and the apex `domain.com` itself. Leaving the apex out makes the root domain return 403 instead of redirecting to `app.*`.
+> **Warning:** activate in this order. Setting the secret before the Cloudflare Transform Rule exists blocks all public traffic and takes the whole site down. The WAF rule is host-agnostic, so the Transform Rule must cover every proxied hostname routed to the ALB: `app.*`, `auth.*`, `admin.*` and the apex `domain.com` itself. Leaving the apex out makes the root domain return 403 instead of redirecting to `app.*`.
 
 1. **First**, create a Transform Rule (Rules → Transform Rules → Modify Request Header) in the Cloudflare zone that sets `x-origin-auth` to the secret on every request to every proxied hostname, apex included, and confirm it is live.
 2. **Second**, store the same value as the `CDK_ORIGIN_SHARED_SECRET` GitHub Actions secret (and in `cdk.context.local.json` for local deploys) and deploy.
@@ -546,6 +550,7 @@ The rule accepts exactly one value, so rotation needs the same two-phase discipl
 - `domain.com` → ALB → 302 redirect to `app.domain.com` (no container, just an ALB rule)
 - `app.domain.com` → ALB → ECS Fargate web container (port 8080)
 - `auth.domain.com` → ALB → ECS Fargate auth container (port 8081)
+- `admin.domain.com` → ALB → ECS Fargate admin container (port 8080); see [`docs/admin-app.md`](../../docs/admin-app.md)
 - `api.domain.com/v1/*` → SQL REST API → Lambda authorizer + machine API Lambda
 - `mcp.domain.com/mcp` → dedicated MCP HTTP API v2 → MCP Lambda
 To serve your own site on `domain.com`, point its DNS to your site's hosting (Vercel, etc.). The ALB redirect becomes irrelevant since traffic no longer reaches it.

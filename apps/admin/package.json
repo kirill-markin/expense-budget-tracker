@@ -1,0 +1,32 @@
+{
+  "name": "expense-budget-tracker-admin",
+  "version": "1.8.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001 -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3001} -H ${HOST:-127.0.0.1}",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "aws-jwt-verify": "^5.2.1",
+    "d3": "^7.9.2",
+    "next": "16.4.6",
+    "pg": "^8.23.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=24.22.3 <25"
+  }
+}

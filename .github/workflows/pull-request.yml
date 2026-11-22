@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     outputs:
+      admin_tests: ${{ steps.changes.outputs.admin_tests }}
       auth_tests: ${{ steps.changes.outputs.auth_tests }}
       infra_tests: ${{ steps.changes.outputs.infra_tests }}
       sandbox_tests: ${{ steps.changes.outputs.sandbox_tests }}
@@ -59,6 +60,15 @@ jobs:
               - 'apps/**'
               - 'packages/**'
               - 'infra/**'
+              - 'db/migrations/**'
+              - 'scripts/migrate.sh'
+              - '.github/workflows/pull-request.yml'
+              - '.npmrc'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+            admin_tests:
+              - 'apps/admin/**'
               - 'db/migrations/**'
               - 'scripts/migrate.sh'
               - '.github/workflows/pull-request.yml'
@@ -159,7 +169,8 @@ jobs:
       ${{
         !cancelled()
         && (
-          needs.quality_gate.outputs.auth_tests == 'true'
+          needs.quality_gate.outputs.admin_tests == 'true'
+          || needs.quality_gate.outputs.auth_tests == 'true'
           || needs.quality_gate.outputs.infra_tests == 'true'
           || needs.quality_gate.outputs.sandbox_tests == 'true'
           || needs.quality_gate.outputs.shared_tests == 'true'
@@ -200,13 +211,13 @@ jobs:
         run: npm ci
 
       - name: Install PostgreSQL client
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true' || needs.quality_gate.outputs.web_tests == 'true') }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.admin_tests == 'true' || needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true' || needs.quality_gate.outputs.web_tests == 'true') }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql-client
 
       - name: Apply test database migrations
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true' || needs.quality_gate.outputs.web_tests == 'true') }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.quality_gate.outputs.admin_tests == 'true' || needs.quality_gate.outputs.auth_tests == 'true' || needs.quality_gate.outputs.sql_api_tests == 'true' || needs.quality_gate.outputs.web_tests == 'true') }}
         run: bash scripts/migrate.sh
         env:
           MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
@@ -215,6 +226,13 @@ jobs:
           WORKER_DB_PASSWORD: worker
           ADMIN_READER_DB_PASSWORD: admin_reader
           ADMIN_ANALYTICS_DB_PASSWORD: admin_analytics
+
+      - name: Run admin tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.admin_tests == 'true' }}
+        run: npm --workspace expense-budget-tracker-admin run test
+        env:
+          MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
+          ADMIN_ANALYTICS_DATABASE_URL: postgresql://admin_analytics:admin_analytics@localhost:5432/tracker
 
       - name: Run auth tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}

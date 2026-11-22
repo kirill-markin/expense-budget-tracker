@@ -7,6 +7,7 @@ import {
   queryBeforeDeadline,
   type UserIdentity,
 } from "../db.js";
+import { recordOpenDayOncePerDay } from "../openDayRecorder.js";
 import type { McpScope } from "./config.js";
 
 const ACCESS_TOKEN_PATTERN = /^ebt_at_[A-Za-z0-9_-]{43}$/u;
@@ -34,15 +35,31 @@ export class McpAuthenticationError extends Error {
   }
 }
 
+/**
+ * Tags a failed open-day write so the handler logs it as its own operation.
+ * The original error stays reachable for deadline classification.
+ */
+export class McpOpenDayRecordingError extends Error {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super("Recording the MCP open day failed", { cause: originalError });
+    this.name = "McpOpenDayRecordingError";
+    this.originalError = originalError;
+  }
+}
+
 export type McpAuthDependencies = Readonly<{
   queryBeforeDeadline: typeof queryBeforeDeadline;
   loadTrustedUserIdentityBeforeDeadline: typeof loadTrustedUserIdentityBeforeDeadline;
+  recordOpenDayOncePerDay: typeof recordOpenDayOncePerDay;
   now: () => Date;
 }>;
 
 const defaultDependencies: McpAuthDependencies = {
   queryBeforeDeadline,
   loadTrustedUserIdentityBeforeDeadline,
+  recordOpenDayOncePerDay,
   now: () => new Date(),
 };
 
@@ -118,6 +135,11 @@ export const authenticateMcpAccessTokenWithDependencies = async (
     || !isActiveUserStatus(identity.cognitoStatus)
   ) {
     throw new McpAuthenticationError();
+  }
+  try {
+    await dependencies.recordOpenDayOncePerDay(identity.userId, "mcp", deadline);
+  } catch (error) {
+    throw new McpOpenDayRecordingError(error);
   }
 
   return {

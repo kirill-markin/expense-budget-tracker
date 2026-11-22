@@ -142,6 +142,7 @@ jobs:
             "githubRepo": "${{ vars.CDK_GITHUB_REPO }}",
             "natAmiId": "${{ vars.CDK_NAT_AMI_ID }}",
             "demoEmailDostip": "${{ vars.CDK_DEMO_EMAIL_DOSTIP }}",
+            "adminEmails": "${{ vars.CDK_ADMIN_EMAILS }}",
             "originSharedSecret": "${{ secrets.CDK_ORIGIN_SHARED_SECRET }}"
           }
           CTXEOF

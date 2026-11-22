@@ -12,6 +12,7 @@ import { type Context, Hono } from "hono";
 import {
   authenticateMcpAccessToken,
   McpAuthenticationError,
+  McpOpenDayRecordingError,
   type AuthenticatedMcpAccessToken,
 } from "./mcp/auth.js";
 import { getReadOnlyTransactionDeadlineError } from "./dbDeadline.js";
@@ -232,7 +233,9 @@ const buildMcpRoutes = (
       if (error instanceof McpAuthenticationError) {
         return buildBearerChallengeResponse(context, config);
       }
-      const deadlineError = getReadOnlyTransactionDeadlineError(error);
+      const isOpenDayRecordingError = error instanceof McpOpenDayRecordingError;
+      const stageError = isOpenDayRecordingError ? error.originalError : error;
+      const deadlineError = getReadOnlyTransactionDeadlineError(stageError);
       if (deadlineError !== null) {
         return context.json(
           {
@@ -246,8 +249,8 @@ const buildMcpRoutes = (
         domain: "sql_api",
         action: "mcp_unexpected_error",
         boundary: "authentication",
-        operation: "validate_oauth_access_token",
-        errorType: getSafeErrorType(error),
+        operation: isOpenDayRecordingError ? "record_user_open_day" : "validate_oauth_access_token",
+        errorType: getSafeErrorType(stageError),
       });
       return context.json(
         { error: "internal_error", error_description: "The MCP request could not be authenticated." },

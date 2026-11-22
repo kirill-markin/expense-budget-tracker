@@ -1,0 +1,56 @@
+.title {
+  margin-block-end: 8px;
+}
+
+.summary {
+  margin-block-end: 16px;
+  color: var(--muted);
+}
+
+/* The page itself never scrolls sideways on phones; only the table does. */
+.tableWrapper {
+  overflow-x: auto;
+  border: 1px solid var(--soft-border);
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.table th,
+.table td {
+  padding-block: 6px;
+  padding-inline: 12px;
+  text-align: start;
+  border-block-end: 1px solid var(--soft-border);
+}
+
+.table th {
+  font-weight: 700;
+  background: var(--subtle-bg);
+}
+
+.table tbody tr:last-child td {
+  border-block-end: none;
+}
+
+.table .number {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.excluded td {
+  color: var(--muted);
+}
+
+.reason {
+  margin-inline-start: 8px;
+  padding-block: 1px;
+  padding-inline: 6px;
+  border: 1px solid var(--soft-border);
+  border-radius: 4px;
+  background: var(--subtle-bg);
+  font-size: 0.85em;
+}

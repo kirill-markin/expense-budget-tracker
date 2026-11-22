@@ -7,6 +7,7 @@
   "resendApiKeySecretArn": "arn:aws:secretsmanager:eu-central-1:123456789012:secret:expense-tracker/resend-api-key-xxxxxx",
   "resendSenderEmail": "no-reply@mail.example.com",
   "alertEmail": "your-email@gmail.com",
+  "adminEmails": "your-email@gmail.com",
   "githubRepo": "your-github-user/expense-budget-tracker",
   "natAmiId": "ami-xxxxxxxxxxxxxxxxx",
   "originSharedSecret": ""

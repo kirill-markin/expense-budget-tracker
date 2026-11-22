@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 /** @typedef {{ readonly path: string, readonly value: string }} VersionSurface */
 
 const VERSIONED_PACKAGE_PATHS = [
+  "apps/admin",
   "apps/auth",
   "apps/sql-api",
   "apps/web",

@@ -32,6 +32,7 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 
 - `apps/web/`: Next.js app with UI dashboards and API routes for transactions, balances, budget, and FX data; SQL via `pg.Pool`. The web app also includes an AI chat where the user can open `/chat` and talk to their workspace data directly from the browser.
 - `apps/worker/`: TypeScript process that fetches daily ECB, CBR, NBS, NBU, KuCoin, and USDT exchange rates into `fx_rates_raw`; runs on a schedule (Docker) or as AWS Lambda
+- `apps/admin/`: separate Next.js admin app at `admin.*` with product analytics; read-only, Cognito session plus `ADMIN_EMAILS`, see `docs/admin-app.md`
 - Postgres: single source of truth; schema in `db/migrations/`, views in `db/views/`, reference SQL in `db/queries/`
 
 ## Supported Clients
@@ -60,6 +61,9 @@ Open-source expense and budget tracker: expenses, budgets, balances, transfers, 
 | `db/queries/` | Reference SQL: `balances.sql`, `budget_grid.sql`, `fx_breakdown.sql`, `transactions.sql` |
 | `apps/web/src/server/agent/connections.ts` | Agent connections: API key minting and hashing, listing, active-key cap, revocation |
 | `apps/web/src/app/api/agent-connections/` | Agent connection endpoints: `GET`/`POST` on the collection, `POST` on the `revoke` routes |
+| `apps/admin/src/proxy.ts` | Admin app auth gate: Cognito session, `ADMIN_EMAILS`, GET/HEAD only |
+| `apps/admin/src/server/reports/` | Admin analytics report queries over `counted_users` |
+| `db/migrations/0090_analytics_activity_days.sql` | `analytics.user_open_days` and `analytics.user_track_days`, with the `ledger_entries` track-day trigger |
 | `apps/sql-api/` | SQL API Lambda handlers for API Gateway: `ApiKey` authorizer, v1 machine API, and the OAuth MCP server in `src/mcp/server.ts` |
 | `apps/sql-api/Dockerfile` | Container image for the same code: the default command serves `/v1`, `node dist/serve-mcp.js` serves `/mcp` |
 | `packages/agent-shared/src/agentTools.ts` | Shared catalog of the five agent tools (`list_workspaces`, `get_schema`, `get_guide`, `sql_query`, `sql_execute`) that both the MCP server and the web chat render |
@@ -127,7 +131,7 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 | --- | --- | --- |
 | Postgres, prod | No direct connection by design: RDS is private, with no bastion. Read through `POST https://api.expense-budget-tracker.com/v1/sql/query` with `Authorization: ApiKey <key>` — a fixed relation list, scoped to the selected workspace. Anything wider needs a temporary path opened deliberately; never add standing database access while debugging. The admin-reader Lambda below is the one deliberate read-only exception. | workspace data, counts, data shape |
 | Postgres, local | `make dev`, then `psql` with `DATABASE_URL` from `.env.example` | schema, views, query development |
-| CloudWatch Logs | `/expense-tracker/web` (30-day retention), `/expense-tracker/auth`, `/expense-tracker/migrate`; Lambda groups under `/aws/lambda/` for FX, authorizer, SQL API, and MCP handlers; API Gateway access logs and agent tool-call queries in [docs/agent-telemetry.md](docs/agent-telemetry.md) | request-level debugging by `requestId`, agent tool-call failures |
+| CloudWatch Logs | `/expense-tracker/web` (30-day retention), `/expense-tracker/auth`, `/expense-tracker/admin`, `/expense-tracker/migrate`; Lambda groups under `/aws/lambda/` for FX, authorizer, SQL API, and MCP handlers; API Gateway access logs and agent tool-call queries in [docs/agent-telemetry.md](docs/agent-telemetry.md) | request-level debugging by `requestId`, agent tool-call failures |
 | CloudWatch metrics | custom namespace `ExpenseBudgetTracker/Db`, metric `PoolErrors`; alarms and metric filters in `infra/aws/lib/monitoring.ts` | error rates, DB pool failures, ECS, RDS, and API Gateway health |
 | ALB access logs | S3 bucket `expense-tracker-alb-logs-<accountId>`, 90-day expiration | traffic, status codes, client IPs |
 | LLM telemetry and chats, prod | `scripts/admin-read.sh` (private admin-reader Lambda, read-only, IAM); see [docs/admin-reader.md](docs/admin-reader.md) and [docs/llm-telemetry.md](docs/llm-telemetry.md) | chat spans, model and tool behavior, token usage, transcripts across users |
@@ -141,5 +145,6 @@ AWS profile and region setup is in `## AWS Deployment`. Start from logs and trac
 - [docs/account-email-changes.md](docs/account-email-changes.md) - the admin-only procedure for changing an account email, and the heads-up it requires
 - [docs/llm-telemetry.md](docs/llm-telemetry.md) - chat span tree, `llm_telemetry_spans` columns and attributes, optional OTLP export
 - [docs/agent-telemetry.md](docs/agent-telemetry.md) - what each agent surface records about tool calls, and the CloudWatch queries that count failures
+- [docs/admin-app.md](docs/admin-app.md) - admin app, analytics tables, access model, rollout, adding an admin
 - [infra/aws/README.md](infra/aws/README.md) - full AWS CDK deployment guide
 - [Makefile](Makefile) - `make up`, `make down`, `make migrate`, `make build`, `make lint`

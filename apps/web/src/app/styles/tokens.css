@@ -13,6 +13,9 @@
   --mask-bg: #d0d0d0;
   --grid-line: rgba(0, 0, 0, 0.08);
   --grid-line-strong: rgba(0, 0, 0, 0.4);
+  /* Stacked chart segments: at least 3:1 against each other and against --panel. */
+  --chart-new: #808080;
+  --chart-returning: #232323;
   /* Treemap cells keep their light categorical surfaces in both themes. */
   --treemap-text: #222222;
   --treemap-muted: #555555;
@@ -52,6 +55,8 @@
   --mask-bg: #555555;
   --grid-line: rgba(255, 255, 255, 0.12);
   --grid-line-strong: rgba(255, 255, 255, 0.4);
+  --chart-new: #707070;
+  --chart-returning: #e0e0e0;
   /* Treemap cells keep their light categorical surfaces in both themes. */
   --treemap-text: #222222;
   --treemap-muted: #555555;

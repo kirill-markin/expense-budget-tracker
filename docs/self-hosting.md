@@ -42,7 +42,7 @@ docker compose -f infra/docker/compose.selfhost.yml \
 
 Pass `--env-file` on every later command too, including `down`, `logs` and `exec`. The file is deliberately not named `.env`: Compose reads `infra/docker/.env` automatically, and that one belongs to the development stack.
 
-Every variable in the env file is required and has no default, except `SELFHOST_BIND_ADDRESS`, the `SELFHOST_EDGE_CA_DIR` and `NODE_EXTRA_CA_CERTS` pair that lets `web` and `auth` trust a privately issued JWKS certificate, and the optional integrations at the bottom. A missing required value stops the command instead of starting a container with an empty setting.
+Every variable in the env file is required and has no default, except `SELFHOST_BIND_ADDRESS`, the `SELFHOST_EDGE_CA_DIR` and `NODE_EXTRA_CA_CERTS` pair that lets `web` and `auth` trust a privately issued JWKS certificate, and the optional integrations at the bottom. A missing required value stops the command instead of starting a container with an empty setting. An existing `.env.selfhost` must therefore gain every required variable the example adds, such as `ADMIN_ANALYTICS_DB_PASSWORD` for the read-only [admin analytics](./admin-app.md) role, or every `docker compose` command fails.
 
 Services and the ports they publish to the edge:
 

@@ -21,6 +21,7 @@ import {
   withRestrictedTrustedIdentityContext,
 } from "./db.js";
 import { getSafeErrorType, log } from "./logger.js";
+import { recordOpenDayOncePerDay } from "./openDayRecorder.js";
 import {
   handleCreateWorkspaceRoute,
   handleDiscoveryRoute,
@@ -54,6 +55,7 @@ export const createMachineApiHandler = (
     log,
     queryAsTrustedIdentity,
     queryAsTrustedIdentityBeforeDeadline,
+    recordOpenDayOncePerDay,
     resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline,
     withReadOnlyRestrictedTrustedIdentityContext,
     withRestrictedTrustedIdentityContext,
@@ -77,6 +79,8 @@ export const createMachineApiHandler = (
     // `resolveAuthenticatedContext` decides `missing_api_key` from the
     // authorizer context alone, before any database work, so an
     // unauthenticated request still answers 401 during a database outage.
+    // Every authenticated request records the person's `api` open day here,
+    // once, so no route has to.
     const authenticationDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
     let authentication: AuthenticationOutcome;
     try {
@@ -84,6 +88,13 @@ export const createMachineApiHandler = (
         event,
         (userId) => dependencies.loadTrustedUserIdentityBeforeDeadline(userId, authenticationDeadline),
       );
+      if (authentication.outcome === "authenticated") {
+        await dependencies.recordOpenDayOncePerDay(
+          authentication.authenticated.identity.userId,
+          "api",
+          authenticationDeadline,
+        );
+      }
     } catch (error) {
       dependencies.log({
         domain: "sql_api",

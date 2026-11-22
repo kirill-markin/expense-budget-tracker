@@ -369,6 +369,9 @@ test("MCP handler maps current identity trust failures to the generic Bearer cha
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => disabledIdentity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -431,6 +434,9 @@ test("MCP handler maps invalid scope snapshots to the generic Bearer challenge",
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -470,6 +476,9 @@ test("MCP handler keeps unrelated access-token row corruption as an internal err
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -493,6 +502,86 @@ test("MCP handler keeps unrelated access-token row corruption as an internal err
     operation: "validate_oauth_access_token",
     errorType: "error",
   }]);
+});
+
+const authenticateWithOpenDayRecorder = (
+  recordOpenDayOncePerDay: () => Promise<void>,
+): Authenticator => (token, resource, deadline) => authenticateMcpAccessTokenWithDependencies(
+  token,
+  resource,
+  deadline,
+  {
+    queryBeforeDeadline: async () => createQueryResult([{
+      connection_id: CONNECTION.connectionId,
+      user_id: CONNECTION.identity.userId,
+      client_id: CONNECTION.clientId,
+      resource: RESOURCE,
+      scopes: CONNECTION.scopes,
+      expires_at: new Date("2026-08-14T13:00:00.000Z"),
+    }]),
+    loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
+    recordOpenDayOncePerDay,
+    now: () => new Date("2026-08-14T12:00:00.000Z"),
+  },
+);
+
+test("MCP handler logs a failed open-day write as its own operation", async (): Promise<void> => {
+  const logEvents: Array<SqlApiLogEvent> = [];
+  const app = createMcpApp(createDependencies(
+    authenticateWithOpenDayRecorder(async () => {
+      throw new Error("insert or update on table user_open_days violates foreign key constraint");
+    }),
+    logEvents,
+  ));
+
+  const response = await app.request(RESOURCE, {
+    method: "POST",
+    headers: authenticatedHeaders(),
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), {
+    error: "internal_error",
+    error_description: "The MCP request could not be authenticated.",
+  });
+  assert.deepEqual(logEvents, [{
+    domain: "sql_api",
+    action: "mcp_unexpected_error",
+    boundary: "authentication",
+    operation: "record_user_open_day",
+    errorType: "error",
+  }]);
+});
+
+test("MCP handler maps an open-day write deadline to retryable 504", async (): Promise<void> => {
+  const deadlineErrors: ReadonlyArray<Error> = [
+    new SqlExecutionDeadlineError(MCP_SQL_STATEMENT_TIMEOUT_MS),
+    new SqlTransactionOutcomeUnknownError(
+      "commit",
+      new SqlExecutionDeadlineError(MCP_SQL_STATEMENT_TIMEOUT_MS),
+      "unknown",
+      undefined,
+    ),
+  ];
+  for (const deadlineError of deadlineErrors) {
+    const logEvents: Array<SqlApiLogEvent> = [];
+    const app = createMcpApp(createDependencies(
+      authenticateWithOpenDayRecorder(async () => {
+        throw deadlineError;
+      }),
+      logEvents,
+    ));
+
+    const response = await app.request(RESOURCE, {
+      method: "POST",
+      headers: authenticatedHeaders(),
+    });
+    assert.equal(response.status, 504);
+    assert.deepEqual(await response.json(), {
+      error: "request_deadline_exceeded",
+      error_description: "The MCP request exceeded its 20-second total execution deadline. Retry the request.",
+    });
+    assert.deepEqual(logEvents, []);
+  }
 });
 
 test("MCP handler rejects non-canonical Host and Origin before authentication", async (): Promise<void> => {
