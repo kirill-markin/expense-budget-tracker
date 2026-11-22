@@ -21,6 +21,8 @@ Four components, one database:
 3. **worker** (`apps/worker/`) — TypeScript process that fetches daily raw exchange rates from ECB, CBR, NBS, NBU, KuCoin, and USDT, stores them in `fx_rates_raw`, and rebuilds query-ready all-pairs daily rates in `fx_rates_daily`. Runs on a schedule (local Docker) or as a Lambda (AWS).
 4. **Postgres** — single source of truth with workspace-scoped RLS and derived reporting views.
 
+The **admin** app (`apps/admin/`) is a separate service at `admin.*` with product analytics for the operators. It reads the `analytics.user_open_days` and `analytics.user_track_days` tables through the read-only `admin_analytics` role; see [`docs/admin-app.md`](./admin-app.md).
+
 ## Data model
 
 ```

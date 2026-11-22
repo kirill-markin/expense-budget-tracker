@@ -52,7 +52,7 @@ Chat telemetry is documented in [`docs/llm-telemetry.md`](./llm-telemetry.md).
 
 We recommend deploying into a **dedicated AWS account** (the AWS equivalent of a GCP project) for complete isolation of resources, billing, and IAM. See step 1 in the AWS README for setup instructions.
 
-Summary: CDK stack deploys VPC, ECS Fargate (web app), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. Docker images are built by CDK (via `fromAsset`) and pushed to the CDK bootstrap ECR repo. DNS is managed via Cloudflare (domain registration, CNAME to ALB, CDN, edge SSL). Open registration: anyone can sign up with email, each user gets an isolated workspace via RLS.
+Summary: CDK stack deploys VPC, ECS Fargate (web, auth, and [admin](./admin-app.md) apps), RDS Postgres (private), ALB with Cognito auth + Cloudflare Origin Certificate, WAF, Lambda for FX fetchers, CloudWatch monitoring, and S3 access logs. Docker images are built by CDK (via `fromAsset`) and pushed to the CDK bootstrap ECR repo. DNS is managed via Cloudflare (domain registration, CNAMEs to ALB for the root, `app.*`, `auth.*`, and `admin.*`, CDN, edge SSL). Open registration: anyone can sign up with email, each user gets an isolated workspace via RLS.
 
 ### Bootstrap and CI/CD
 
