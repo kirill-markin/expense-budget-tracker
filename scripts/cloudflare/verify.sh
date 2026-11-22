@@ -254,6 +254,7 @@ echo ""
 echo "Checking DNS records..."
 check_managed_cname "app.${ZONE_NAME}" "App subdomain" "$STACK_ALB_DNS"
 check_managed_cname "auth.${ZONE_NAME}" "Auth subdomain" "$STACK_ALB_DNS"
+check_managed_cname "admin.${ZONE_NAME}" "Admin subdomain" "$STACK_ALB_DNS"
 check_managed_cname "api.${ZONE_NAME}" "Machine API subdomain" "$STACK_API_TARGET"
 check_managed_cname "mcp.${ZONE_NAME}" "MCP subdomain" "$STACK_MCP_TARGET"
 
@@ -290,7 +291,7 @@ echo "Checking cache bypass rule..."
 CACHE_RULESET=$(cloudflare_optional_get_request \
   "read cache ruleset" \
   "/zones/${CLOUDFLARE_ZONE_ID}/rulesets/phases/http_request_cache_settings/entrypoint")
-EXPECTED_CACHE_EXPRESSION="(http.host eq \"app.${ZONE_NAME}\" or http.host eq \"auth.${ZONE_NAME}\" or http.host eq \"mcp.${ZONE_NAME}\" or http.host eq \"${ZONE_NAME}\")"
+EXPECTED_CACHE_EXPRESSION="(http.host eq \"app.${ZONE_NAME}\" or http.host eq \"auth.${ZONE_NAME}\" or http.host eq \"admin.${ZONE_NAME}\" or http.host eq \"mcp.${ZONE_NAME}\" or http.host eq \"${ZONE_NAME}\")"
 CACHE_RULE_COUNT=$(echo "$CACHE_RULESET" | python3 -c '
 import sys, json
 
