@@ -43,7 +43,7 @@ const buildCsp = (nonce: string, adminOrigin: string): string => {
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
-    "form-action 'none'",
+    "form-action 'self'",
     "connect-src 'self'",
     "frame-src 'none'",
     "frame-ancestors 'none'",
