@@ -21,6 +21,7 @@ export interface ComputeProps {
   authDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
   adminReaderDbSecret: cdk.aws_secretsmanager.Secret;
+  adminAnalyticsDbSecret: cdk.aws_secretsmanager.Secret;
   sessionEncryptionKeySecret: cdk.aws_secretsmanager.Secret;
   openaiApiKeySecret: cdk.aws_secretsmanager.Secret;
   chatSandboxBridgeSecret: cdk.aws_secretsmanager.Secret;
@@ -380,6 +381,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       AUTH_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.authDbSecret, "password"),
       WORKER_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.workerDbSecret, "password"),
       ADMIN_READER_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.adminReaderDbSecret, "password"),
+      ADMIN_ANALYTICS_DB_PASSWORD: ecs.Secret.fromSecretsManager(props.adminAnalyticsDbSecret, "password"),
     },
     logging: ecs.LogDrivers.awsLogs({
       logGroup: migrateLogGroup,

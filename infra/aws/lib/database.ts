@@ -14,6 +14,7 @@ export interface DatabaseResult {
   authDbSecret: cdk.aws_secretsmanager.Secret;
   workerDbSecret: cdk.aws_secretsmanager.Secret;
   adminReaderDbSecret: cdk.aws_secretsmanager.Secret;
+  adminAnalyticsDbSecret: cdk.aws_secretsmanager.Secret;
 }
 
 const POSTGRES_ENGINE_VERSION = rds.PostgresEngineVersion.of("18.6", "18", {
@@ -104,5 +105,16 @@ export function database(scope: Construct, props: DatabaseProps): DatabaseResult
     },
   });
 
-  return { db, appDbSecret, authDbSecret, workerDbSecret, adminReaderDbSecret };
+  // --- Admin analytics DB role secret (admin app's read-only activity analytics) ---
+  const adminAnalyticsDbSecret = new cdk.aws_secretsmanager.Secret(scope, "AdminAnalyticsDbSecret", {
+    secretName: "expense-tracker/admin-analytics-db-password",
+    generateSecretString: {
+      secretStringTemplate: JSON.stringify({ username: "admin_analytics" }),
+      generateStringKey: "password",
+      excludePunctuation: true,
+      passwordLength: 32,
+    },
+  });
+
+  return { db, appDbSecret, authDbSecret, workerDbSecret, adminReaderDbSecret, adminAnalyticsDbSecret };
 }

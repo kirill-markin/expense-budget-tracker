@@ -62,6 +62,7 @@ services:
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?set AUTH_DB_PASSWORD in the env file}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?set WORKER_DB_PASSWORD in the env file}
       ADMIN_READER_DB_PASSWORD: ${ADMIN_READER_DB_PASSWORD:?set ADMIN_READER_DB_PASSWORD in the env file}
+      ADMIN_ANALYTICS_DB_PASSWORD: ${ADMIN_ANALYTICS_DB_PASSWORD:?set ADMIN_ANALYTICS_DB_PASSWORD in the env file}
     volumes:
       - ../../scripts:/scripts:ro
       - ../../db:/db:ro

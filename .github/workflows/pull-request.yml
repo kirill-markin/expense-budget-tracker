@@ -214,6 +214,7 @@ jobs:
           AUTH_DB_PASSWORD: auth_service
           WORKER_DB_PASSWORD: worker
           ADMIN_READER_DB_PASSWORD: admin_reader
+          ADMIN_ANALYTICS_DB_PASSWORD: admin_analytics
 
       - name: Run auth tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.auth_tests == 'true' }}
@@ -237,6 +238,7 @@ jobs:
           MIGRATION_DATABASE_URL: postgresql://tracker:tracker@localhost:5432/tracker
           APP_DATABASE_URL: postgresql://app:app@localhost:5432/tracker
           ADMIN_READER_DATABASE_URL: postgresql://admin_reader:admin_reader@localhost:5432/tracker
+          ADMIN_ANALYTICS_DATABASE_URL: postgresql://admin_analytics:admin_analytics@localhost:5432/tracker
 
       - name: Run web unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.quality_gate.outputs.web_tests == 'true' }}
