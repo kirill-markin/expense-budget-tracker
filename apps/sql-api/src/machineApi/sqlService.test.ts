@@ -58,6 +58,9 @@ const createDependencies = (
     createQueryResult([{ workspace_id: "user-1", name: "Personal" }])),
   queryAsTrustedIdentityBeforeDeadline: overrides.queryAsTrustedIdentityBeforeDeadline ?? (async () =>
     createQueryResult([{ workspace_id: "user-1", name: "Personal" }])),
+  recordOpenDayOncePerDay: overrides.recordOpenDayOncePerDay ?? (async () => {
+    throw new Error("recordOpenDayOncePerDay should not be called");
+  }),
   resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline:
     overrides.resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline ?? (async () => ({
       workspaceId: "user-1",

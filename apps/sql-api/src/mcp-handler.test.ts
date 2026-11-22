@@ -369,6 +369,9 @@ test("MCP handler maps current identity trust failures to the generic Bearer cha
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => disabledIdentity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -431,6 +434,9 @@ test("MCP handler maps invalid scope snapshots to the generic Bearer challenge",
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),
@@ -470,6 +476,9 @@ test("MCP handler keeps unrelated access-token row corruption as an internal err
           expires_at: new Date("2026-08-14T13:00:00.000Z"),
         }]),
         loadTrustedUserIdentityBeforeDeadline: async () => CONNECTION.identity,
+        recordOpenDayOncePerDay: async () => {
+          throw new Error("recordOpenDayOncePerDay should not be called");
+        },
         now: () => new Date("2026-08-14T12:00:00.000Z"),
       },
     ),

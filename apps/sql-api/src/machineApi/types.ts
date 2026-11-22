@@ -12,6 +12,7 @@ import {
   withReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
 } from "../db.js";
+import type { recordOpenDayOncePerDay } from "../openDayRecorder.js";
 
 export type TrustedIdentityContext = Readonly<{
   identity: UserIdentity;
@@ -30,6 +31,7 @@ export type MachineApiDependencies = Readonly<{
   log: typeof log;
   queryAsTrustedIdentity: typeof queryAsTrustedIdentity;
   queryAsTrustedIdentityBeforeDeadline: typeof queryAsTrustedIdentityBeforeDeadline;
+  recordOpenDayOncePerDay: typeof recordOpenDayOncePerDay;
   resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: typeof resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline;
   withReadOnlyRestrictedTrustedIdentityContext: typeof withReadOnlyRestrictedTrustedIdentityContext;
   withRestrictedTrustedIdentityContext: typeof withRestrictedTrustedIdentityContext;

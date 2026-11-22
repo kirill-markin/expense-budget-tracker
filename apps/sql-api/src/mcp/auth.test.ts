@@ -46,6 +46,7 @@ type AuthCalls = {
   queries: Array<Readonly<{ text: string; params: ReadonlyArray<unknown> }>>;
   loadedUserIds: Array<string>;
   deadlines: Array<SqlExecutionDeadline>;
+  recordedOpenDays: Array<Readonly<{ userId: string; surface: string; deadline: SqlExecutionDeadline }>>;
 };
 
 const createDeadline = (): SqlExecutionDeadline =>
@@ -66,6 +67,9 @@ const createDependencies = (
     calls.deadlines.push(deadline);
     return identity;
   },
+  recordOpenDayOncePerDay: async (userId, surface, deadline) => {
+    calls.recordedOpenDays.push({ userId, surface, deadline });
+  },
   now: () => NOW,
 });
 
@@ -80,7 +84,7 @@ const validRow = (overrides: Readonly<Record<string, unknown>>): Readonly<Record
 });
 
 test("MCP auth hashes the entire opaque access token and loads the existing user identity", async (): Promise<void> => {
-  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
   const deadline = createDeadline();
   const result = await authenticateMcpAccessTokenWithDependencies(
     ACCESS_TOKEN,
@@ -97,6 +101,7 @@ test("MCP auth hashes the entire opaque access token and loads the existing user
   assert.deepEqual(calls.loadedUserIds, [IDENTITY.userId]);
   assert.equal(calls.deadlines.length, 2);
   assert.equal(calls.deadlines.every((received) => received === deadline), true);
+  assert.deepEqual(calls.recordedOpenDays, [{ userId: IDENTITY.userId, surface: "mcp", deadline }]);
   assert.deepEqual(result, {
     connectionId: "connection-1",
     clientId: "ebt_cl_client",
@@ -107,7 +112,7 @@ test("MCP auth hashes the entire opaque access token and loads the existing user
 });
 
 test("MCP auth accepts the canonical read-only scope snapshot", async (): Promise<void> => {
-  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
   const result = await authenticateMcpAccessTokenWithDependencies(
     ACCESS_TOKEN,
     RESOURCE,
@@ -129,7 +134,7 @@ test("MCP auth rejects non-OAuth credentials before database access", async (): 
     `EBT_AT_${"A".repeat(43)}`,
     `ebt_at_${"A".repeat(42)}`,
   ]) {
-    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     await assert.rejects(
       () => authenticateMcpAccessTokenWithDependencies(
         token,
@@ -149,7 +154,7 @@ test("MCP auth rejects missing, expired, and wrong-resource access-token grants"
     [validRow({ expires_at: NOW })],
     [validRow({ resource: "https://mcp.other.example/mcp" })],
   ]) {
-    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     await assert.rejects(
       () => authenticateMcpAccessTokenWithDependencies(
         ACCESS_TOKEN,
@@ -171,7 +176,7 @@ test("MCP auth rejects invalid scope snapshots", async (): Promise<void> => {
   ];
 
   for (const scopes of invalidSnapshots) {
-    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     await assert.rejects(
       () => authenticateMcpAccessTokenWithDependencies(
         ACCESS_TOKEN,
@@ -189,7 +194,7 @@ test("MCP auth rejects invalid scope snapshots", async (): Promise<void> => {
 });
 
 test("MCP auth preserves unrelated database row corruption as an internal error", async (): Promise<void> => {
-  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
   await assert.rejects(
     () => authenticateMcpAccessTokenWithDependencies(
       ACCESS_TOKEN,
@@ -233,7 +238,7 @@ test("MCP auth rejects absent and currently untrusted user identities as invalid
   ];
 
   for (const testCase of cases) {
-    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     await assert.rejects(
       () => authenticateMcpAccessTokenWithDependencies(
         ACCESS_TOKEN,
@@ -247,11 +252,12 @@ test("MCP auth rejects absent and currently untrusted user identities as invalid
       testCase.name,
     );
     assert.deepEqual(calls.loadedUserIds, [IDENTITY.userId], testCase.name);
+    assert.deepEqual(calls.recordedOpenDays, [], testCase.name);
   }
 });
 
 test("MCP auth accepts an identity provisioned through the authentication proxy", async (): Promise<void> => {
-  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+  const calls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
   const result = await authenticateMcpAccessTokenWithDependencies(
     ACCESS_TOKEN,
     RESOURCE,
@@ -268,7 +274,7 @@ test("MCP auth accepts an identity provisioned through the authentication proxy"
 // value. The gate admits both, and `cognito_enabled` revokes either one.
 test("MCP auth gates a proxy-provisioned user identically after an ApiKey request rewrote the stored status", async (): Promise<void> => {
   for (const cognitoStatus of ["PROXY", "CONFIRMED"]) {
-    const activeCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const activeCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     const result = await authenticateMcpAccessTokenWithDependencies(
       ACCESS_TOKEN,
       RESOURCE,
@@ -277,7 +283,7 @@ test("MCP auth gates a proxy-provisioned user identically after an ApiKey reques
     );
     assert.equal(result.identity.cognitoStatus, cognitoStatus);
 
-    const revokedCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [] };
+    const revokedCalls: AuthCalls = { queries: [], loadedUserIds: [], deadlines: [], recordedOpenDays: [] };
     await assert.rejects(
       () => authenticateMcpAccessTokenWithDependencies(
         ACCESS_TOKEN,

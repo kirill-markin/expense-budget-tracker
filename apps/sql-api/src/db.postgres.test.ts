@@ -25,6 +25,7 @@ import {
 } from "@expense-budget-tracker/agent-shared/sql-policy";
 import {
   loadTrustedUserIdentityBeforeDeadline,
+  recordUserOpenDayBeforeDeadline,
   upsertUserIdentity,
   type UserIdentity,
 } from "./db.js";
@@ -153,6 +154,53 @@ test(
         await ownerPool.query("DELETE FROM public.users WHERE user_id = $1", [userId]);
       } finally {
         await Promise.all([ownerPool.end(), appPool.end()]);
+      }
+    }
+  },
+);
+
+test(
+  "recordUserOpenDayBeforeDeadline records one open day per surface in its own writable transaction",
+  { skip: postgresTestSkip },
+  async (): Promise<void> => {
+    if (databaseUrlsMissing) {
+      throw new Error(`${MISSING_DATABASE_URLS_MESSAGE}; CI=true forbids skipping this test`);
+    }
+
+    const userId = `sql-api-open-day-user-${randomUUID().replaceAll("-", "")}`;
+    const ownerPool = new pg.Pool({ connectionString: migrationDatabaseUrl });
+
+    try {
+      await ownerPool.query(
+        `INSERT INTO public.users (user_id, email, email_verified, cognito_status, cognito_enabled)
+         VALUES ($1, $2, true, 'CONFIRMED', true)`,
+        [userId, `${userId}@example.invalid`],
+      );
+
+      for (const surface of ["api", "api", "mcp"] as const) {
+        await recordUserOpenDayBeforeDeadline(
+          userId,
+          surface,
+          createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now),
+        );
+      }
+
+      const recorded = await ownerPool.query<{ surface: string; is_today: boolean }>(
+        `SELECT surface, activity_date = (now() AT TIME ZONE 'UTC')::date AS is_today
+         FROM analytics.user_open_days
+         WHERE user_id = $1
+         ORDER BY surface`,
+        [userId],
+      );
+      assert.deepEqual(recorded.rows, [
+        { surface: "api", is_today: true },
+        { surface: "mcp", is_today: true },
+      ]);
+    } finally {
+      try {
+        await ownerPool.query("DELETE FROM public.users WHERE user_id = $1", [userId]);
+      } finally {
+        await ownerPool.end();
       }
     }
   },

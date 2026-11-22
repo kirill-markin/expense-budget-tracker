@@ -38,6 +38,9 @@ test("loadAllowedSchema resolves a real workspace context before querying", asyn
     queryAsTrustedIdentityBeforeDeadline: async () => {
       throw new Error("queryAsTrustedIdentityBeforeDeadline should not be called");
     },
+    recordOpenDayOncePerDay: async () => {
+      throw new Error("recordOpenDayOncePerDay should not be called");
+    },
     resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline: async () => {
       throw new Error("resolveOrCreateWorkspaceForTrustedIdentityBeforeDeadline should not be called");
     },

@@ -588,6 +588,26 @@ export const loadTrustedUserIdentityBeforeDeadline = async (
   },
 );
 
+export type OpenDaySurface = "api" | "mcp";
+
+/**
+ * Record today's open day for an existing users row. The function writes, so
+ * it needs its own writable transaction as `app`: a caller's read-only or
+ * role-switched transaction cannot run it.
+ */
+export const recordUserOpenDayBeforeDeadline = async (
+  userId: string,
+  surface: OpenDaySurface,
+  deadline: SqlExecutionDeadline,
+): Promise<void> => withDeadlineTransaction(
+  deadline,
+  "BEGIN",
+  async (queryFn): Promise<void> => {
+    await queryFn("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await queryFn("SELECT analytics.record_user_open_day($1)", [surface]);
+  },
+);
+
 export const withRestrictedTrustedIdentityContext = async <T>(
   identity: UserIdentity,
   workspaceId: string,

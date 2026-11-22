@@ -7,6 +7,7 @@ import {
   queryBeforeDeadline,
   type UserIdentity,
 } from "../db.js";
+import { recordOpenDayOncePerDay } from "../openDayRecorder.js";
 import type { McpScope } from "./config.js";
 
 const ACCESS_TOKEN_PATTERN = /^ebt_at_[A-Za-z0-9_-]{43}$/u;
@@ -37,12 +38,14 @@ export class McpAuthenticationError extends Error {
 export type McpAuthDependencies = Readonly<{
   queryBeforeDeadline: typeof queryBeforeDeadline;
   loadTrustedUserIdentityBeforeDeadline: typeof loadTrustedUserIdentityBeforeDeadline;
+  recordOpenDayOncePerDay: typeof recordOpenDayOncePerDay;
   now: () => Date;
 }>;
 
 const defaultDependencies: McpAuthDependencies = {
   queryBeforeDeadline,
   loadTrustedUserIdentityBeforeDeadline,
+  recordOpenDayOncePerDay,
   now: () => new Date(),
 };
 
@@ -119,6 +122,7 @@ export const authenticateMcpAccessTokenWithDependencies = async (
   ) {
     throw new McpAuthenticationError();
   }
+  await dependencies.recordOpenDayOncePerDay(identity.userId, "mcp", deadline);
 
   return {
     connectionId: row.connection_id,

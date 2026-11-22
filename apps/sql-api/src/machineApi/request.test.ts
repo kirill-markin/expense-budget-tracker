@@ -91,6 +91,9 @@ test("the machine API answers 403 for a disabled account and provisions nothing"
   const handler = createMachineApiHandler({
     log: (event) => { logged.push(event); },
     loadTrustedUserIdentityBeforeDeadline: async () => ({ ...STORED_IDENTITY, cognitoEnabled: false }),
+    recordOpenDayOncePerDay: async () => {
+      throw new Error("recordOpenDayOncePerDay should not be called");
+    },
     ensureTrustedIdentityProvisioned: async () => {
       throw new Error("ensureTrustedIdentityProvisioned should not be called");
     },
@@ -107,6 +110,38 @@ test("the machine API answers 403 for a disabled account and provisions nothing"
   assert.equal(payload.error.code, "account_disabled");
   // An operator who disables a row needs a CloudWatch signal that the refusal fired.
   assert.deepEqual(logged, [{ domain: "sql_api", action: "agent_account_disabled", userId: "user-1" }]);
+});
+
+test("an authenticated request records the person's api open day before routing", async (): Promise<void> => {
+  const recorded: Array<Readonly<{ userId: string; surface: string }>> = [];
+  const handler = createMachineApiHandler({
+    loadTrustedUserIdentityBeforeDeadline: async () => STORED_IDENTITY,
+    recordOpenDayOncePerDay: async (userId, surface) => {
+      recorded.push({ userId, surface });
+    },
+  });
+
+  const response = await handler(createAuthenticatedEvent({ path: "/v1/unknown", resource: "/unknown" }));
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(recorded, [{ userId: "user-1", surface: "api" }]);
+});
+
+test("a failed open-day write answers the same retryable envelope as the account-state read", async (): Promise<void> => {
+  const handler = createMachineApiHandler({
+    log: (): void => undefined,
+    loadTrustedUserIdentityBeforeDeadline: async () => STORED_IDENTITY,
+    recordOpenDayOncePerDay: async () => {
+      throw new Error("insert or update on table user_open_days violates foreign key constraint");
+    },
+  });
+
+  const response = await handler(createAuthenticatedEvent({ path: "/v1/me", resource: "/me" }));
+
+  assert.equal(response.statusCode, 500);
+  const payload = JSON.parse(response.body) as { data: { retryable: boolean }; error: { code: string } };
+  assert.equal(payload.data.retryable, true);
+  assert.equal(payload.error.code, "agent_auth_unavailable");
 });
 
 test("a database failure during the account-state read answers a retryable envelope", async (): Promise<void> => {
