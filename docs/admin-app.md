@@ -28,7 +28,7 @@ Migration [`0092`](../db/migrations/0092_analytics_activity_backfill.sql) backfi
 - a shared workspace attributes its tracked days to every member;
 - already pruned history is not recovered.
 
-Who counts: every report reads people through `counted_users` in [`countedUsers.ts`](../apps/admin/src/server/countedUsers.ts), which drops the `local` dev identity, `ADMIN_EMAILS` and `ANALYTICS_EXCLUDED_EMAILS`. On AWS the excluded list is the demo account `demoEmailDostip`, or empty when that is unset. Report queries live in [`apps/admin/src/server/reports/`](../apps/admin/src/server/reports/).
+Who counts: the Level 1 metrics read people through `counted_users` in [`countedUsers.ts`](../apps/admin/src/server/countedUsers.ts), which drops the `local` dev identity, `ADMIN_EMAILS` and `ANALYTICS_EXCLUDED_EMAILS`. Users lists everyone and marks the people who are not counted. On AWS the excluded list is the demo account `demoEmailDostip`, or empty when that is unset. Report queries live in [`apps/admin/src/server/reports/`](../apps/admin/src/server/reports/).
 
 ## Rollout
 
@@ -37,11 +37,11 @@ Who counts: every report reads people through `counted_users` in [`countedUsers.
 3. Deploy by merging to `main`.
 4. Only after the deploy that adds the `AdminRoute`, run `scripts/cloudflare/setup-dns.sh`, then `scripts/cloudflare/verify.sh` (commands in [step 6](../infra/aws/README.md#6-bootstrap-and-first-deploy)). DNS created earlier sends `admin.<domain>` to the web app's default ALB action.
 
-If the deploy's migrate step fails with the 0092 lock-timeout error, nothing was changed and a rerun is safe. A long autovacuum on a source table is a typical cause: wait until `pg_stat_progress_vacuum` shows none, then run `gh workflow run deploy.yml --ref main`.
+If the deploy's migrate step fails with the 0092 lock-timeout error, nothing was changed and a rerun is safe. A long autovacuum on a source table is a typical cause: rerun later with `gh workflow run deploy.yml --ref main`.
 
 ## Add or remove an admin
 
-Change `CDK_ADMIN_EMAILS` and deploy (`gh workflow run deploy.yml --ref main`). Admins are also excluded from every report.
+Change `CDK_ADMIN_EMAILS` and deploy (`gh workflow run deploy.yml --ref main`). Admins are also excluded from the Level 1 metrics.
 
 ## Pitfalls for other CDK deployers
 
