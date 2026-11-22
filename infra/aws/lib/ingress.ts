@@ -19,9 +19,11 @@ export interface IngressProps {
   certificate: acm.ICertificate;
   webService: ecs.FargateService;
   authService: ecs.FargateService;
+  adminService: ecs.FargateService;
   baseDomain: string;
   appDomain: string;
   authDomain: string;
+  adminDomain: string;
   originSharedSecret: string;
 }
 
@@ -589,6 +591,26 @@ export function ingress(scope: Construct, props: IngressProps): IngressResult {
     priority: 10,
     conditions: [elbv2.ListenerCondition.hostHeaders([props.authDomain])],
     action: elbv2.ListenerAction.forward([authTargetGroup]),
+  });
+
+  // Admin service target group (port 8080, already open from the ALB on ecsSg)
+  const adminTargetGroup = new elbv2.ApplicationTargetGroup(scope, "AdminTg", {
+    vpc: props.vpc,
+    port: 8080,
+    protocol: elbv2.ApplicationProtocol.HTTP,
+    targetType: elbv2.TargetType.IP,
+    healthCheck: {
+      path: "/health",
+      interval: cdk.Duration.seconds(30),
+    },
+  });
+  props.adminService.attachToApplicationTargetGroup(adminTargetGroup);
+
+  // admin.* → forward to admin service
+  httpsListener.addAction("AdminRoute", {
+    priority: 15,
+    conditions: [elbv2.ListenerCondition.hostHeaders([props.adminDomain])],
+    action: elbv2.ListenerAction.forward([adminTargetGroup]),
   });
 
   // Base domain → redirect to app subdomain (no container needed).

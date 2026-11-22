@@ -30,6 +30,8 @@ export interface ComputeProps {
   userPoolClientId: string;
   appDomain: string;
   authDomain: string;
+  adminDomain: string;
+  adminEmails: string;
   demoEmailDostip: string;
   demoPasswordSecret: cdk.aws_secretsmanager.ISecret | null;
 }
@@ -41,6 +43,8 @@ export interface ComputeResult {
   webLogGroup: logs.LogGroup;
   authService: ecs.FargateService;
   authLogGroup: logs.LogGroup;
+  adminService: ecs.FargateService;
+  adminLogGroup: logs.LogGroup;
   migrateTaskDef: ecs.FargateTaskDefinition;
   migrateLogGroup: logs.LogGroup;
 }
@@ -137,6 +141,30 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     "packages/**",
     "!packages/agent-shared",
     "!packages/agent-shared/**",
+  ];
+  // Mirrors exactly what apps/admin/Dockerfile copies. The root .dockerignore
+  // patterns come first in the list CDK applies, so "!apps/admin/**" would
+  // re-include local node_modules and .next output without the two re-excludes.
+  const adminDockerAssetExclude = [
+    "**",
+    "!.npmrc",
+    "!package.json",
+    "!package-lock.json",
+    "!apps",
+    "apps/**",
+    "!apps/admin",
+    "!apps/admin/**",
+    "apps/admin/node_modules",
+    "apps/admin/node_modules/**",
+    "apps/admin/.next",
+    "apps/admin/.next/**",
+    // globals.css imports these two web stylesheets by relative path. As with
+    // apps/sandbox/src/contract.ts above, the intermediate directories stay
+    // excluded: the walker still descends to these exact files.
+    "!apps/web",
+    "apps/web/**",
+    "!apps/web/src/app/styles/tokens.css",
+    "!apps/web/src/app/styles/reset.css",
   ];
   const migrateDockerAssetExclude = [
     "**",
@@ -303,7 +331,7 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
       COGNITO_CLIENT_ID: props.userPoolClientId,
       COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_REGION: cdk.Aws.REGION,
-      ALLOWED_REDIRECT_URIS: `https://${props.appDomain}`,
+      ALLOWED_REDIRECT_URIS: `https://${props.appDomain},https://${props.adminDomain}`,
       COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
       OAUTH_ISSUER: `https://${props.authDomain}`,
       OAUTH_RESOURCE: `https://mcp.${props.appDomain.split(".").slice(1).join(".")}/mcp`,
@@ -339,6 +367,73 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   const authService = new ecs.FargateService(scope, "AuthService", {
     cluster,
     taskDefinition: authTaskDef,
+    desiredCount: 1,
+    assignPublicIp: false,
+    vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+    securityGroups: [props.ecsSg],
+    ...serviceDeploymentProps,
+  });
+
+  // --- Admin Service ---
+  const adminTaskDef = new ecs.FargateTaskDefinition(scope, "AdminTask", {
+    cpu: 256,
+    memoryLimitMiB: 512,
+    runtimePlatform: {
+      cpuArchitecture: ecs.CpuArchitecture.ARM64,
+      operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+    },
+  });
+
+  const adminLogGroup = new logs.LogGroup(scope, "AdminLogGroup", {
+    logGroupName: "/expense-tracker/admin",
+    retention: logs.RetentionDays.ONE_MONTH,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
+
+  // Environment parsed by apps/admin/src/server/config.ts.
+  adminTaskDef.addContainer("admin", {
+    image: ecs.ContainerImage.fromAsset(path.join(__dirname, "../../.."), {
+      file: "apps/admin/Dockerfile",
+      exclude: adminDockerAssetExclude,
+      ignoreMode: cdk.IgnoreMode.DOCKER,
+      platform: Platform.LINUX_ARM64,
+    }),
+    portMappings: [{ containerPort: 8080 }],
+    environment: {
+      ADMIN_AUTH_MODE: "cognito",
+      ADMIN_ORIGIN: `https://${props.adminDomain}`,
+      AUTH_DOMAIN: props.authDomain,
+      COOKIE_DOMAIN: `.${props.appDomain.split(".").slice(1).join(".")}`,
+      COGNITO_REGION: cdk.Aws.REGION,
+      COGNITO_USER_POOL_ID: props.userPoolId,
+      COGNITO_CLIENT_ID: props.userPoolClientId,
+      ADMIN_EMAILS: props.adminEmails,
+      // Always set: an empty value is the deliberate "exclude nobody extra".
+      ANALYTICS_EXCLUDED_EMAILS: props.demoEmailDostip,
+      DB_HOST: props.db.dbInstanceEndpointAddress,
+      DB_NAME: "tracker",
+      DB_USER: "admin_analytics",
+      NODE_EXTRA_CA_CERTS: "/app/rds-global-bundle.pem",
+    },
+    secrets: {
+      DB_PASSWORD: ecs.Secret.fromSecretsManager(props.adminAnalyticsDbSecret, "password"),
+    },
+    logging: ecs.LogDrivers.awsLogs({
+      logGroup: adminLogGroup,
+      streamPrefix: "admin",
+    }),
+    healthCheck: {
+      command: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"],
+      interval: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(5),
+      retries: 3,
+      startPeriod: cdk.Duration.seconds(60),
+    },
+  });
+
+  const adminService = new ecs.FargateService(scope, "AdminService", {
+    cluster,
+    taskDefinition: adminTaskDef,
     desiredCount: 1,
     assignPublicIp: false,
     vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
@@ -389,5 +484,16 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
     }),
   });
 
-  return { cluster, webService, webContainer, webLogGroup, authService, authLogGroup, migrateTaskDef, migrateLogGroup };
+  return {
+    cluster,
+    webService,
+    webContainer,
+    webLogGroup,
+    authService,
+    authLogGroup,
+    adminService,
+    adminLogGroup,
+    migrateTaskDef,
+    migrateLogGroup,
+  };
 }
