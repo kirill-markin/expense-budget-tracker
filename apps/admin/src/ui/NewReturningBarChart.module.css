@@ -1,0 +1,115 @@
+.chart {
+  min-inline-size: 0;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-block-end: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-block;
+  inline-size: 10px;
+  block-size: 10px;
+  flex-shrink: 0;
+}
+
+.newSwatch {
+  background: var(--muted);
+}
+
+.returningSwatch {
+  background: var(--accent);
+}
+
+/* Time runs left to right in every locale, so the plot and its tooltip offset stay LTR. */
+.plot {
+  position: relative;
+  direction: ltr;
+  inline-size: 100%;
+}
+
+.plot svg {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+}
+
+.inProgress {
+  opacity: 0.4;
+}
+
+.hit {
+  outline: none;
+}
+
+.hit:hover {
+  fill: var(--hover-bg);
+}
+
+.hit:focus-visible {
+  fill: var(--selected-bg);
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
+/* Beside the bar (--bar-x, set inline), clamped inside the plot so it never widens the page. */
+.tooltip {
+  --tooltip-width: min(18rem, 100%);
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: clamp(0px, calc(var(--bar-x) + 8px), calc(100% - var(--tooltip-width)));
+  inline-size: var(--tooltip-width);
+  padding-block: 8px;
+  padding-inline: 12px;
+  font-size: 12px;
+  color: var(--tooltip-text);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.tooltipFlipped {
+  inset-inline-start: clamp(0px, calc(var(--bar-x) - 8px - var(--tooltip-width)), calc(100% - var(--tooltip-width)));
+}
+
+.tooltip .swatch {
+  border: 1px solid var(--tooltip-muted);
+}
+
+.tooltipTitle {
+  margin-block-end: 6px;
+  font-weight: 700;
+}
+
+.tooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-block: 1px;
+}
+
+.tooltipTotal {
+  margin-block-start: 4px;
+  padding-block-start: 4px;
+  border-block-start: 1px solid var(--tooltip-border);
+  color: var(--tooltip-muted);
+}
+
+.tooltipValue {
+  margin-inline-start: auto;
+  padding-inline-start: 16px;
+  font-variant-numeric: tabular-nums;
+}

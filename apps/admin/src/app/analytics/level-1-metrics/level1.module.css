@@ -1,0 +1,37 @@
+.title {
+  margin-block: 0 8px;
+}
+
+.summary {
+  margin-block: 0 16px;
+  color: var(--muted);
+}
+
+/* One column on phones and tablets, two from 1100px; items never force a sideways page scroll. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-block: 12px;
+  padding-inline: 16px;
+  border: 1px solid var(--danger);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.error strong {
+  color: var(--danger);
+}

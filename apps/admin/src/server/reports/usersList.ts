@@ -30,7 +30,7 @@ export type UsersList = Readonly<{
 type ParsedRow = Readonly<{ totalCount: number; user: UsersListRow }>;
 
 const ISO_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
-const SURFACES: ReadonlyArray<ActivitySurface> = ["web", "api", "mcp"];
+export const ACTIVITY_SURFACES: ReadonlyArray<ActivitySurface> = ["web", "api", "mcp"];
 
 // The reason reuses counted_users, so this list and every counted report agree on who is excluded.
 // Days are formatted in SQL because pg turns DATE values into local-time Date objects.
@@ -100,7 +100,7 @@ const requireCount = (row: RawRow, column: string): number => {
 };
 
 const isSurface = (value: unknown): value is ActivitySurface =>
-  SURFACES.some((surface: ActivitySurface): boolean => surface === value);
+  ACTIVITY_SURFACES.some((surface: ActivitySurface): boolean => surface === value);
 
 const requireSurfaces = (row: RawRow): ReadonlyArray<ActivitySurface> => {
   const value = row.surfaces;
