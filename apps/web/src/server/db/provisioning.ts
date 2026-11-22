@@ -23,7 +23,11 @@ const hasRecordedWebOpenDay = (userId: string, day: string): boolean =>
   recordedWebOpenDays.day === day && recordedWebOpenDays.userIds.has(userId);
 
 const markWebOpenDayRecorded = (userId: string, day: string): void => {
-  if (recordedWebOpenDays.day !== day) {
+  // A request that started before midnight must not replace a later day's set.
+  if (day < recordedWebOpenDays.day) {
+    return;
+  }
+  if (day > recordedWebOpenDays.day) {
     recordedWebOpenDays = { day, userIds: new Set<string>() };
   }
   recordedWebOpenDays.userIds.add(userId);
