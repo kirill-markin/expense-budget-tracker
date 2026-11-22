@@ -81,6 +81,9 @@ const createDependencies = (
   ensureUserSettings: async (): Promise<void> => {
     commands.push("ensureUserSettings");
   },
+  recordOpenDay: async (): Promise<void> => {
+    commands.push("recordOpenDay");
+  },
 });
 
 const isAccessErrorForIdentity = (error: unknown): boolean =>
@@ -106,6 +109,7 @@ test("a removed member is rejected on the next call while settings writes stay c
     SET_USER_ID,
     SET_WORKSPACE_ID,
     "upsertIdentity",
+    "recordOpenDay",
     MEMBERSHIP_CHECK,
     WORKSPACE_SETTINGS_CHECK,
     WORKSPACE_SETTINGS_INSERT,

@@ -14,6 +14,21 @@ const provisionedWorkspaceSettings = new Set<string>();
 /** Users whose settings row is already verified to exist in this process. */
 const provisionedUsers = new Set<string>();
 
+/** Users whose `web` open day for `day` (UTC) is already committed by this process. */
+let recordedWebOpenDays: { day: string; userIds: Set<string> } = { day: "", userIds: new Set<string>() };
+
+const getCurrentUtcDay = (): string => new Date().toISOString().slice(0, 10);
+
+const hasRecordedWebOpenDay = (userId: string, day: string): boolean =>
+  recordedWebOpenDays.day === day && recordedWebOpenDays.userIds.has(userId);
+
+const markWebOpenDayRecorded = (userId: string, day: string): void => {
+  if (recordedWebOpenDays.day !== day) {
+    recordedWebOpenDays = { day, userIds: new Set<string>() };
+  }
+  recordedWebOpenDays.userIds.add(userId);
+};
+
 // Only these unique violations are expected during concurrent first-request
 // provisioning. The users email mirror can race too: concurrent inserts for the
 // same authenticated identity may surface on the secondary unique email index
@@ -35,6 +50,7 @@ type ProvisioningDependencies = Readonly<{
   getInitialLocale: () => Promise<SupportedLocale>;
   upsertIdentity: (client: DbClient, identity: UserIdentity) => Promise<void>;
   ensureUserSettings: (client: DbClient, userId: string, locale: SupportedLocale) => Promise<void>;
+  recordOpenDay: (client: DbClient) => Promise<void>;
 }>;
 
 const createProvisioningDependencies = (): ProvisioningDependencies => ({
@@ -42,6 +58,9 @@ const createProvisioningDependencies = (): ProvisioningDependencies => ({
   getInitialLocale: getLocaleCookie,
   upsertIdentity: async (client, identity) => upsertUserIdentity(client as PoolClient, identity),
   ensureUserSettings: async (client, userId, locale) => ensureUserSettingsRow(client as PoolClient, userId, locale),
+  recordOpenDay: async (client) => {
+    await client.query("SELECT analytics.record_user_open_day('web')");
+  },
 });
 
 /** Narrow PostgreSQL unique-violation handling to known concurrent inserts. */
@@ -131,12 +150,17 @@ export const ensureProvisionedIdentity = async (
   const initialLocale = await dependencies.getInitialLocale();
   const shouldCacheWorkspaceSettings = !provisionedWorkspaceSettings.has(workspaceId);
   const shouldCacheUser = !provisionedUsers.has(userId);
+  const openDay = getCurrentUtcDay();
+  const shouldRecordOpenDay = !hasRecordedWebOpenDay(userId, openDay);
   const client = await dependencies.pool.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
     await dependencies.upsertIdentity(client, identity);
+    if (shouldRecordOpenDay) {
+      await dependencies.recordOpenDay(client);
+    }
 
     const check = await client.query(
       "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
@@ -171,12 +195,16 @@ export const ensureProvisionedIdentity = async (
     if (shouldCacheUser) {
       provisionedUsers.add(userId);
     }
+    if (shouldRecordOpenDay) {
+      markWebOpenDayRecorded(userId, openDay);
+    }
   } catch (error) {
     await client.query("ROLLBACK");
     if (isExpectedProvisioningConflict(error)) {
       await verifyProvisionedState(dependencies.pool, userId, workspaceId);
       provisionedWorkspaceSettings.add(workspaceId);
       provisionedUsers.add(userId);
+      // The rolled-back transaction dropped the open day; the next request records it.
       return;
     }
     throw error;
@@ -233,4 +261,5 @@ export const ensureTrustedIdentityProvisioned = async (
 export const resetProvisioningCachesForTests = (): void => {
   provisionedWorkspaceSettings.clear();
   provisionedUsers.clear();
+  recordedWebOpenDays = { day: "", userIds: new Set<string>() };
 };
