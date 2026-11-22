@@ -8,6 +8,7 @@ The root `package.json` and the root `package-lock.json` package entry are orche
 
 Update each `version` field in these workspace manifests:
 
+- `apps/admin/package.json`
 - `apps/auth/package.json`
 - `apps/sql-api/package.json`
 - `apps/web/package.json`
@@ -15,7 +16,7 @@ Update each `version` field in these workspace manifests:
 - `infra/aws/package.json`
 - `packages/agent-shared/package.json`
 
-Update the matching `packages["<workspace path>"].version` fields in `package-lock.json` for all six workspaces.
+Update the matching `packages["<workspace path>"].version` fields in `package-lock.json` for all seven workspaces.
 
 Keep the exact `@expense-budget-tracker/agent-shared` dependency pin equal to the shared version in these manifests and their matching `package-lock.json` workspace entries:
 
