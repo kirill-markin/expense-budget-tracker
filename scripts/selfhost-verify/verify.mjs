@@ -133,6 +133,7 @@ const writeEnvFile = () => {
     "AUTH_DB_PASSWORD=selfhost-verify-auth",
     "WORKER_DB_PASSWORD=selfhost-verify-worker",
     "ADMIN_READER_DB_PASSWORD=selfhost-verify-admin-reader",
+    "ADMIN_ANALYTICS_DB_PASSWORD=selfhost-verify-admin-analytics",
     "",
   ].join("\n"));
 };

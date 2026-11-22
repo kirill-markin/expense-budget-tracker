@@ -40,6 +40,7 @@ services:
       AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_service}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-worker}
       ADMIN_READER_DB_PASSWORD: ${ADMIN_READER_DB_PASSWORD:-admin_reader}
+      ADMIN_ANALYTICS_DB_PASSWORD: ${ADMIN_ANALYTICS_DB_PASSWORD:-admin_analytics}
     volumes:
       - ../../scripts:/scripts:ro
       - ../../db:/db:ro

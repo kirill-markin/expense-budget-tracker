@@ -10,6 +10,7 @@
 #   WORKER_DB_PASSWORD — password for the worker role (default: 'worker').
 #   AUTH_DB_PASSWORD   — password for the auth_service role (default: 'auth_service').
 #   ADMIN_READER_DB_PASSWORD — password for the admin_reader role (default: 'admin_reader').
+#   ADMIN_ANALYTICS_DB_PASSWORD — password for the admin_analytics role (default: 'admin_analytics').
 
 set -euo pipefail
 
@@ -48,10 +49,15 @@ if [[ -n "${PGHOST:-}" && -z "${ADMIN_READER_DB_PASSWORD:-}" ]]; then
   echo "ERROR: ADMIN_READER_DB_PASSWORD is required in production (PGHOST mode)" >&2
   exit 1
 fi
+if [[ -n "${PGHOST:-}" && -z "${ADMIN_ANALYTICS_DB_PASSWORD:-}" ]]; then
+  echo "ERROR: ADMIN_ANALYTICS_DB_PASSWORD is required in production (PGHOST mode)" >&2
+  exit 1
+fi
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-app}"
 WORKER_DB_PASSWORD="${WORKER_DB_PASSWORD:-worker}"
 AUTH_DB_PASSWORD="${AUTH_DB_PASSWORD:-auth_service}"
 ADMIN_READER_DB_PASSWORD="${ADMIN_READER_DB_PASSWORD:-admin_reader}"
+ADMIN_ANALYTICS_DB_PASSWORD="${ADMIN_ANALYTICS_DB_PASSWORD:-admin_analytics}"
 
 # Create migration tracking table (idempotent).
 # If this is an existing database (tables already created by prior deploys),
@@ -160,6 +166,20 @@ END
 $$;
 
 ALTER ROLE admin_reader WITH PASSWORD :'admin_reader_pass';
+SQL
+
+echo "Setting admin_analytics role password..."
+# Role created by migration 0091_admin_analytics_role.sql.
+run_psql -v "admin_analytics_pass=$ADMIN_ANALYTICS_DB_PASSWORD" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'admin_analytics') THEN
+    RAISE EXCEPTION 'Role admin_analytics does not exist. Run migrations first.';
+  END IF;
+END
+$$;
+
+ALTER ROLE admin_analytics WITH PASSWORD :'admin_analytics_pass';
 SQL
 
 echo "Migrations complete."
