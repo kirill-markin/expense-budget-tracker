@@ -68,6 +68,8 @@ export const buildMcpCallerLabel = (userAgent: string | null): string | null =>
     ? null
     : userAgent.replace(MCP_CALLER_LOG_DISALLOWED_CHARS, ".").slice(0, MAX_MCP_CALLER_LOG_CHARS);
 
+export type AgentAuthUnavailableOperation = "load_account_state" | "record_user_open_day";
+
 export type SqlApiLogEvent =
   // Emitted once by a container entry point after it starts listening. The
   // Lambda handlers never emit it.
@@ -132,12 +134,15 @@ export type SqlApiLogEvent =
     action: "agent_account_disabled";
     userId: string;
   }>
-  // The account-state read itself failed, so the request was answered as
-  // retryable rather than refused. It is kept apart from the refusal above so
-  // an auth-path database outage is never read as a wave of revocations.
+  // The account-state read or the open-day write that follows it failed, so
+  // the request was answered as retryable rather than refused. It is kept
+  // apart from the refusal above so an auth-path database outage is never read
+  // as a wave of revocations, and operation keeps a broken open-day write from
+  // reading as an auth outage.
   | Readonly<{
     domain: "sql_api";
     action: "agent_auth_unavailable";
+    operation: AgentAuthUnavailableOperation;
     errorType: SafeErrorType;
   }>
   // A request answered with the retryable 500 envelope. The response carries a

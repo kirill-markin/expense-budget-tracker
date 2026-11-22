@@ -20,7 +20,7 @@ import {
   withReadOnlyRestrictedTrustedIdentityContext,
   withRestrictedTrustedIdentityContext,
 } from "./db.js";
-import { getSafeErrorType, log } from "./logger.js";
+import { getSafeErrorType, log, type AgentAuthUnavailableOperation } from "./logger.js";
 import { recordOpenDayOncePerDay } from "./openDayRecorder.js";
 import {
   handleCreateWorkspaceRoute,
@@ -82,23 +82,14 @@ export const createMachineApiHandler = (
     // Every authenticated request records the person's `api` open day here,
     // once, so no route has to.
     const authenticationDeadline = createSqlExecutionDeadline(SQL_STATEMENT_TIMEOUT_MS, Date.now);
-    let authentication: AuthenticationOutcome;
-    try {
-      authentication = await resolveAuthenticatedContext(
-        event,
-        (userId) => dependencies.loadTrustedUserIdentityBeforeDeadline(userId, authenticationDeadline),
-      );
-      if (authentication.outcome === "authenticated") {
-        await dependencies.recordOpenDayOncePerDay(
-          authentication.authenticated.identity.userId,
-          "api",
-          authenticationDeadline,
-        );
-      }
-    } catch (error) {
+    const answerAuthUnavailable = (
+      operation: AgentAuthUnavailableOperation,
+      error: unknown,
+    ): APIGatewayProxyResult => {
       dependencies.log({
         domain: "sql_api",
         action: "agent_auth_unavailable",
+        operation,
         errorType: getSafeErrorType(error),
       });
       return buildRetryableErrorResponse(
@@ -108,6 +99,26 @@ export const createMachineApiHandler = (
         error,
         { retryable: true },
       );
+    };
+    let authentication: AuthenticationOutcome;
+    try {
+      authentication = await resolveAuthenticatedContext(
+        event,
+        (userId) => dependencies.loadTrustedUserIdentityBeforeDeadline(userId, authenticationDeadline),
+      );
+    } catch (error) {
+      return answerAuthUnavailable("load_account_state", error);
+    }
+    if (authentication.outcome === "authenticated") {
+      try {
+        await dependencies.recordOpenDayOncePerDay(
+          authentication.authenticated.identity.userId,
+          "api",
+          authenticationDeadline,
+        );
+      } catch (error) {
+        return answerAuthUnavailable("record_user_open_day", error);
+      }
     }
 
     if (authentication.outcome === "missing_api_key") {
