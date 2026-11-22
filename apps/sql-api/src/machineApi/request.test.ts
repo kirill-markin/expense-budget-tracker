@@ -128,8 +128,9 @@ test("an authenticated request records the person's api open day before routing"
 });
 
 test("a failed open-day write answers the same retryable envelope as the account-state read", async (): Promise<void> => {
+  const logged: Array<SqlApiLogEvent> = [];
   const handler = createMachineApiHandler({
-    log: (): void => undefined,
+    log: (event) => { logged.push(event); },
     loadTrustedUserIdentityBeforeDeadline: async () => STORED_IDENTITY,
     recordOpenDayOncePerDay: async () => {
       throw new Error("insert or update on table user_open_days violates foreign key constraint");
@@ -142,6 +143,13 @@ test("a failed open-day write answers the same retryable envelope as the account
   const payload = JSON.parse(response.body) as { data: { retryable: boolean }; error: { code: string } };
   assert.equal(payload.data.retryable, true);
   assert.equal(payload.error.code, "agent_auth_unavailable");
+  // A broken open-day write must not read as an auth outage in CloudWatch.
+  assert.deepEqual(logged[0], {
+    domain: "sql_api",
+    action: "agent_auth_unavailable",
+    operation: "record_user_open_day",
+    errorType: "error",
+  });
 });
 
 test("a database failure during the account-state read answers a retryable envelope", async (): Promise<void> => {
@@ -172,7 +180,7 @@ test("a database failure during the account-state read answers a retryable envel
   // and the redacted cause has to survive somewhere, so both events reach the
   // one injected logger.
   assert.deepEqual(logged, [
-    { domain: "sql_api", action: "agent_auth_unavailable", errorType: "error" },
+    { domain: "sql_api", action: "agent_auth_unavailable", operation: "load_account_state", errorType: "error" },
     {
       domain: "sql_api",
       action: "agent_request_unavailable",
