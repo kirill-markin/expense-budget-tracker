@@ -183,12 +183,13 @@ const handleCognitoRequest = async (
     return redirectToLogin(auth, config.adminOrigin, request, true, csp);
   }
 
-  const email = typeof session.claims.email === "string" ? session.claims.email.trim().toLowerCase() : null;
+  const email = typeof session.claims.email === "string" ? session.claims.email : null;
   const response = decision === "allowed" && email !== null
     ? forwardAsAdmin(request, email, nonce, csp)
     : rewriteToForbidden(request, nonce, csp);
   if (decision === "forbidden") {
-    log({ domain: "admin_auth", action: "forbidden", email, path: requestPath(request) });
+    const userId = typeof session.claims.sub === "string" ? session.claims.sub : null;
+    log({ domain: "admin_auth", action: "forbidden", userId, path: requestPath(request) });
   }
   if (session.refreshed !== null) {
     for (const cookie of buildSessionCookieHeaders(auth, session.refreshed)) {

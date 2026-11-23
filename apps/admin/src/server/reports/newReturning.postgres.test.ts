@@ -53,7 +53,7 @@ test(
     const seededUsers = [
       [alice, `new-returning-alice-${suffix}@example.invalid`],
       [bob, `new-returning-bob-${suffix}@example.invalid`],
-      // Stored in mixed case to prove the exclusion ignores case.
+      // Stored and configured in different cases to prove the exclusion ignores case.
       [admin, adminEmail.toUpperCase()],
       [excluded, excludedEmail],
     ] as const;

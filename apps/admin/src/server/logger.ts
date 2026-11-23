@@ -2,7 +2,7 @@ type AdminAuthEvent =
   | Readonly<{ domain: "admin_auth"; action: "refresh" }>
   | Readonly<{ domain: "admin_auth"; action: "refresh_failed"; error: string }>
   | Readonly<{ domain: "admin_auth"; action: "session_invalid"; error: string }>
-  | Readonly<{ domain: "admin_auth"; action: "forbidden"; email: string | null; path: string }>
+  | Readonly<{ domain: "admin_auth"; action: "forbidden"; userId: string | null; path: string }>
   | Readonly<{ domain: "admin_auth"; action: "method_not_allowed"; method: string; path: string }>
   | Readonly<{ domain: "admin_auth"; action: "non_loopback_host"; host: string | null; path: string }>;
 

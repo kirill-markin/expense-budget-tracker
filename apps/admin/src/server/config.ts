@@ -38,11 +38,11 @@ const parseAuthMode = (environment: Environment): "cognito" | "none" => {
   throw new Error(`ADMIN_AUTH_MODE must be "cognito" or "none", got ${JSON.stringify(value ?? null)}`);
 };
 
-/** A comma list of emails, trimmed and lowercased; an empty entry such as `a@x.com,,b@x.com` is a typo and fails. */
+/** A comma list of trimmed emails; an empty entry such as `a@x.com,,b@x.com` is a typo and fails. */
 const parseEmailList = (name: string, value: string): ReadonlyArray<string> => {
   if (value.trim() === "") return [];
   return value.split(",").map((entry: string): string => {
-    const email = entry.trim().toLowerCase();
+    const email = entry.trim();
     if (email === "" || !email.includes("@")) {
       throw new Error(`${name} contains an invalid email entry ${JSON.stringify(entry)}; expected a comma list of emails`);
     }
@@ -50,21 +50,27 @@ const parseEmailList = (name: string, value: string): ReadonlyArray<string> => {
   });
 };
 
+/** Matched exactly, so a capital letter could only match an account created outside the login service, which stores emails lowercase. */
 const parseAdminEmails = (environment: Environment): ReadonlyArray<string> => {
   const emails = parseEmailList("ADMIN_EMAILS", requireNonEmpty(environment, "ADMIN_EMAILS"));
   if (emails.length === 0) {
     throw new Error("ADMIN_EMAILS must list at least one email");
   }
+  for (const email of emails) {
+    if (email !== email.toLowerCase()) {
+      throw new Error(`ADMIN_EMAILS entry ${JSON.stringify(email)} must be lowercase: the login service stores every account email lowercase`);
+    }
+  }
   return emails;
 };
 
-/** Must be present so that excluding nobody is a deliberate choice, but may be empty. */
+/** Must be present so that excluding nobody is a deliberate choice, but may be empty. Lowercased for case-insensitive exclusion. */
 const parseAnalyticsExcludedEmails = (environment: Environment): ReadonlyArray<string> => {
   const value = environment.ANALYTICS_EXCLUDED_EMAILS;
   if (value === undefined) {
     throw new Error("ANALYTICS_EXCLUDED_EMAILS must be set; use an empty value to exclude no extra emails");
   }
-  return parseEmailList("ANALYTICS_EXCLUDED_EMAILS", value);
+  return parseEmailList("ANALYTICS_EXCLUDED_EMAILS", value).map((email: string): string => email.toLowerCase());
 };
 
 const parseAdminOrigin = (environment: Environment, mode: "cognito" | "none"): string => {

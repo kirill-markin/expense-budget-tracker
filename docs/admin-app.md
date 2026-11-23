@@ -6,9 +6,9 @@
 
 - Every request passes [`apps/admin/src/proxy.ts`](../apps/admin/src/proxy.ts), which requires:
   - a verified Cognito session from the `session` and `refresh` cookies the auth service sets on `COOKIE_DOMAIN`, so admins sign in at `auth.<domain>` like everyone else;
-  - a verified email listed in `ADMIN_EMAILS`, an environment variable of the admin service only, filled from the GitHub repository variable `CDK_ADMIN_EMAILS`; there is no admin table;
+  - a verified email that equals an entry of `ADMIN_EMAILS` exactly, case included, an environment variable of the admin service only, filled from the GitHub repository variable `CDK_ADMIN_EMAILS`; there is no admin table;
   - a GET or HEAD method; everything else gets 405.
-- A signed-in person who is not an admin gets a 403 page.
+- A signed-in person who is not an admin gets a 403 page, and the log records their user id, not their email.
 - The app has no public API: its pages read the database on the server.
 - `ADMIN_AUTH_MODE=none` admits every request as a local admin. It is for local development only: the dev script binds 127.0.0.1, and the proxy also refuses a non-loopback `Host`.
 - The app connects as the role `admin_analytics` ([`0091`](../db/migrations/0091_admin_analytics_role.sql)). It can read only `analytics.user_open_days`, `analytics.user_track_days` and the `users` columns `user_id`, `email`, `created_at`, `first_seen_at`, `last_seen_at`: no workspace, ledger or chat data, and no writes.
@@ -32,7 +32,7 @@ Who counts: the Level 1 metrics read people through `counted_users` in [`counted
 
 ## Rollout
 
-1. Set the GitHub repository variable `CDK_ADMIN_EMAILS` to a comma list of admin emails. The deploy fails with a clear error without it.
+1. Set the GitHub repository variable `CDK_ADMIN_EMAILS` to a comma list of admin emails, each written exactly as the account's email. The login service stores every email lowercase, so an entry with a capital letter is rejected: every admin request then fails with a configuration error, as in the pitfall below. The deploy fails with a clear error without it.
 2. Make sure the Cloudflare Transform Rule that injects `x-origin-auth` covers `admin.<domain>` (see [Origin shared secret](../infra/aws/README.md#origin-shared-secret-cloudflare--alb)); otherwise the WAF blocks it.
 3. Deploy by merging to `main`.
 4. Only after the deploy that adds the `AdminRoute`, run `scripts/cloudflare/setup-dns.sh`, then `scripts/cloudflare/verify.sh` (commands in [step 6](../infra/aws/README.md#6-bootstrap-and-first-deploy)). DNS created earlier sends `admin.<domain>` to the web app's default ALB action.
@@ -45,7 +45,7 @@ Change `CDK_ADMIN_EMAILS` and deploy (`gh workflow run deploy.yml --ref main`). 
 
 ## Pitfalls for other CDK deployers
 
-- An empty entry in `CDK_ADMIN_EMAILS`, such as `a@x.com,,b@x.com`, passes synth, but every admin request then fails with a configuration error ([`config.ts`](../apps/admin/src/server/config.ts)). `/health` does not evaluate the configuration, so the service still looks healthy: check `/expense-tracker/admin` after changing the variable.
+- An empty or non-lowercase entry in `CDK_ADMIN_EMAILS`, such as `a@x.com,,b@x.com` or `Admin@x.com`, passes synth, but every admin request then fails with a configuration error ([`config.ts`](../apps/admin/src/server/config.ts)). `/health` does not evaluate the configuration, so the service still looks healthy: check `/expense-tracker/admin` after changing the variable.
 - Without `demoEmailDostip`, `ANALYTICS_EXCLUDED_EMAILS` is empty and only admins and `local` are excluded.
 
 ## Local run
