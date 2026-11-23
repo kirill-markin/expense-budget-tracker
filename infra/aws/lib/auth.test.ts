@@ -56,6 +56,12 @@ test("app client refresh tokens expire in 35 days and rotate with a 60 second gr
   });
 });
 
+test("the user pool refuses public SignUp so only the auth service creates accounts", (): void => {
+  synthesizeAuthTemplate().hasResourceProperties("AWS::Cognito::UserPool", {
+    AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
+  });
+});
+
 test("the user pool keeps the original email until a new one is verified", (): void => {
   synthesizeAuthTemplate().hasResourceProperties("AWS::Cognito::UserPool", {
     UserAttributeUpdateSettings: { AttributesRequireVerificationBeforeUpdate: ["email"] },

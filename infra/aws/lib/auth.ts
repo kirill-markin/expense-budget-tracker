@@ -18,7 +18,8 @@ export interface AuthResult {
 export function auth(scope: Construct, props: AuthProps): AuthResult {
   const userPool = new cognito.UserPool(scope, "UserPool", {
     userPoolName: "expense-tracker-users",
-    selfSignUpEnabled: true,
+    // The auth service creates accounts with AdminCreateUser; public SignUp is refused
+    selfSignUpEnabled: false,
     signInAliases: { email: true },
     featurePlan: cognito.FeaturePlan.ESSENTIALS,
     signInPolicy: { allowedFirstAuthFactors: { password: true, emailOtp: true } },

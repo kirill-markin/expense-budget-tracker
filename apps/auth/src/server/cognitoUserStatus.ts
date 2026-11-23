@@ -1,11 +1,11 @@
 import {
   AdminGetUserCommand,
-  CognitoIdentityProviderClient,
   CognitoIdentityProviderServiceException,
   UserNotFoundException,
   UserStatusType,
   type AdminGetUserCommandOutput,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { getCognitoAdminClient } from "./cognitoAdminClient.js";
 import {
   getSafeErrorType,
   log,
@@ -129,22 +129,10 @@ export const getCognitoOAuthOwnerStatusWithDependencies = async (
   throw new Error("Cognito OAuth owner validation retry loop ended without a result");
 };
 
-let client: CognitoIdentityProviderClient | undefined;
-
-const getClient = (): CognitoIdentityProviderClient => {
-  if (client !== undefined) return client;
-  const region = process.env.COGNITO_REGION ?? "";
-  if (region === "") {
-    throw new Error("Cognito OAuth owner validation requires COGNITO_REGION");
-  }
-  client = new CognitoIdentityProviderClient({ region, maxAttempts: 1 });
-  return client;
-};
-
 const adminGetUser = (
   userPoolId: string,
   userId: string,
-): Promise<AdminGetUserCommandOutput> => getClient().send(new AdminGetUserCommand({
+): Promise<AdminGetUserCommandOutput> => getCognitoAdminClient().send(new AdminGetUserCommand({
   UserPoolId: userPoolId,
   Username: userId,
 }));

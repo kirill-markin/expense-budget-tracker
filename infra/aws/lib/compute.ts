@@ -360,7 +360,11 @@ export function compute(scope: Construct, props: ComputeProps): ComputeResult {
   });
 
   authTaskDef.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ["cognito-idp:AdminGetUser"],
+    actions: [
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminSetUserPassword",
+    ],
     resources: [props.userPoolArn],
   }));
 
