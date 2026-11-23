@@ -10,8 +10,16 @@ describe("decideAdminAccess", () => {
     assert.equal(decideAdminAccess(null, config), "redirect_to_login");
   });
 
-  it("allows a verified listed email regardless of case", () => {
-    assert.equal(decideAdminAccess({ email: "Admin@Example.com", email_verified: true }, config), "allowed");
+  it("allows a verified email that equals a listed email exactly", () => {
+    assert.equal(decideAdminAccess({ email: "admin@example.com", email_verified: true }, config), "allowed");
+  });
+
+  it("forbids a case variant of a listed email", () => {
+    assert.equal(decideAdminAccess({ email: "Admin@Example.com", email_verified: true }, config), "forbidden");
+  });
+
+  it("forbids a whitespace-padded listed email", () => {
+    assert.equal(decideAdminAccess({ email: " admin@example.com ", email_verified: true }, config), "forbidden");
   });
 
   it("forbids a verified email that is not listed", () => {
