@@ -559,7 +559,7 @@ To serve your own site on `domain.com`, point its DNS to your site's hosting (Ve
 
 1. User visits the app → Cloudflare edge → ALB → Next.js proxy
 2. Unauthenticated users are redirected to `auth.*` (Email OTP form)
-3. User enters email → auth service calls Cognito `InitiateAuth` (EMAIL_OTP) → OTP sent to email
+3. User enters email → auth service calls Cognito `InitiateAuth` (EMAIL_OTP); for an unknown email it first creates the account with IAM-signed `AdminCreateUser`, because self sign-up is off → OTP sent to email
 4. User enters 8-digit code → auth service calls Cognito `RespondToAuthChallenge` → receives tokens
 5. Auth service sets `session` + `refresh` cookies (Domain=baseDomain), JS redirects to app
 6. App verifies IdToken from `session` cookie via `CognitoJwtVerifier` (`AUTH_MODE=cognito`)

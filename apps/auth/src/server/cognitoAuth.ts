@@ -1,13 +1,24 @@
 /**
  * Cognito Identity Provider API client for passwordless Email OTP.
  *
- * Calls the Cognito IDP endpoint directly via fetch — no AWS SDK needed.
+ * Public app-client calls go to the Cognito IDP endpoint directly via fetch;
+ * account creation uses IAM-signed admin calls through the AWS SDK.
  * Uses USER_AUTH flow with EMAIL_OTP challenge (Essentials tier).
  *
  * Auth-service scope: OTP sign-in plus browser-session refresh.
  * JWT verification stays in the OAuth session module.
  */
 import { randomBytes } from "node:crypto";
+import {
+  AdminCreateUserCommand,
+  AdminSetUserPasswordCommand,
+  UsernameExistsException,
+  type AdminCreateUserCommandInput,
+  type AdminCreateUserCommandOutput,
+  type AdminSetUserPasswordCommandInput,
+  type AdminSetUserPasswordCommandOutput,
+} from "@aws-sdk/client-cognito-identity-provider";
+import { getCognitoAdminClient } from "./cognitoAdminClient.js";
 import { log, maskEmail, type CognitoRefreshRetryEvent } from "./logger.js";
 
 type CognitoErrorResponse = Readonly<{
@@ -100,24 +111,71 @@ const cognitoFetch = async (
   return response.json() as Promise<Record<string, unknown>>;
 };
 
-/**
- * The app client forbids user-side writes to `email`, so no UserAttributes are
- * sent; the pool uses email as the username attribute and Cognito populates
- * `email` from `Username`.
- */
-const signUpUser = async (email: string): Promise<void> => {
-  await cognitoFetch("SignUp", {
-    ClientId: getClientId(),
-    Username: email,
-    Password: randomBytes(48).toString("base64"),
-  });
+export type InitiateEmailOtpDependencies = Readonly<{
+  request: (target: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  adminCreateUser: (input: AdminCreateUserCommandInput) => Promise<AdminCreateUserCommandOutput>;
+  adminSetUserPassword: (input: AdminSetUserPasswordCommandInput) => Promise<AdminSetUserPasswordCommandOutput>;
+}>;
+
+const getUserPoolId = (): string => {
+  const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
+  if (userPoolId === "") throw new Error("COGNITO_USER_POOL_ID is not configured");
+  return userPoolId;
 };
 
-export const initiateEmailOtp = async (email: string): Promise<InitiateAuthResult> => {
+const describeError = (error: unknown): string =>
+  error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+/**
+ * Self sign-up is off, so this is the only way an account comes into being.
+ * The email counts as verified because the caller's next step proves inbox
+ * ownership with an email code. The permanent random password, which nobody
+ * learns, makes the user CONFIRMED instead of FORCE_CHANGE_PASSWORD.
+ */
+const createUser = async (email: string, dependencies: InitiateEmailOtpDependencies): Promise<void> => {
+  const userPoolId = getUserPoolId();
+  try {
+    await dependencies.adminCreateUser({
+      UserPoolId: userPoolId,
+      Username: email,
+      UserAttributes: [
+        { Name: "email", Value: email },
+        { Name: "email_verified", Value: "true" },
+      ],
+      MessageAction: "SUPPRESS",
+    });
+  } catch (error) {
+    // Concurrent request already created the user — safe to proceed
+    if (error instanceof UsernameExistsException) return;
+    throw new Error(
+      `Cognito AdminCreateUser failed for ${maskEmail(email)}: ${describeError(error)}`,
+      { cause: error },
+    );
+  }
+
+  try {
+    await dependencies.adminSetUserPassword({
+      UserPoolId: userPoolId,
+      Username: email,
+      Password: randomBytes(48).toString("base64"),
+      Permanent: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `Cognito AdminSetUserPassword failed for ${maskEmail(email)} after AdminCreateUser created it, so the user stays FORCE_CHANGE_PASSWORD: ${describeError(error)}`,
+      { cause: error },
+    );
+  }
+};
+
+export const initiateEmailOtpWithDependencies = async (
+  email: string,
+  dependencies: InitiateEmailOtpDependencies,
+): Promise<InitiateAuthResult> => {
   const clientId = getClientId();
 
   const initiateAuth = async (): Promise<Record<string, unknown>> =>
-    cognitoFetch("InitiateAuth", {
+    dependencies.request("InitiateAuth", {
       AuthFlow: "USER_AUTH",
       ClientId: clientId,
       AuthParameters: {
@@ -132,13 +190,7 @@ export const initiateEmailOtp = async (email: string): Promise<InitiateAuthResul
   } catch (err) {
     const cognitoType = (err as Error & { cognitoType?: string }).cognitoType;
     if (cognitoType === "UserNotFoundException") {
-      try {
-        await signUpUser(email);
-      } catch (signUpErr) {
-        // Concurrent request already created the user — safe to proceed
-        const signUpType = (signUpErr as Error & { cognitoType?: string }).cognitoType;
-        if (signUpType !== "UsernameExistsException") throw signUpErr;
-      }
+      await createUser(email, dependencies);
       result = await initiateAuth();
     } else {
       throw err;
@@ -152,6 +204,15 @@ export const initiateEmailOtp = async (email: string): Promise<InitiateAuthResul
 
   return { session };
 };
+
+const initiateEmailOtpDependencies: InitiateEmailOtpDependencies = {
+  request: cognitoFetch,
+  adminCreateUser: (input) => getCognitoAdminClient().send(new AdminCreateUserCommand(input)),
+  adminSetUserPassword: (input) => getCognitoAdminClient().send(new AdminSetUserPasswordCommand(input)),
+};
+
+export const initiateEmailOtp = (email: string): Promise<InitiateAuthResult> =>
+  initiateEmailOtpWithDependencies(email, initiateEmailOtpDependencies);
 
 export const verifyEmailOtp = async (
   email: string,

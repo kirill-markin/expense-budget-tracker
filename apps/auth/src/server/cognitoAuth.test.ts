@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  InvalidParameterException,
+  UsernameExistsException,
+  type AdminCreateUserCommandInput,
+  type AdminSetUserPasswordCommandInput,
+} from "@aws-sdk/client-cognito-identity-provider";
+import {
+  initiateEmailOtpWithDependencies,
   isDefinitiveCognitoRefreshRejection,
   refreshCognitoSessionWithDependencies,
+  type InitiateEmailOtpDependencies,
   type RefreshCognitoSessionDependencies,
 } from "./cognitoAuth.js";
 import type { CognitoRefreshRetryEvent } from "./logger.js";
@@ -164,5 +172,132 @@ test("Cognito refresh keeps the submitted token when the response omits a rotate
     const result = await refreshCognitoSessionWithDependencies("non-rotating-refresh-token", dependencies);
 
     assert.deepEqual(result, { idToken: "fresh-id-token", refreshToken: undefined });
+  });
+});
+
+const withCognitoUserPool = async (operation: () => Promise<void>): Promise<void> => {
+  const previous = process.env.COGNITO_USER_POOL_ID;
+  process.env.COGNITO_USER_POOL_ID = "eu-west-1_pool";
+  try {
+    await withCognitoClientId(operation);
+  } finally {
+    if (previous === undefined) delete process.env.COGNITO_USER_POOL_ID;
+    else process.env.COGNITO_USER_POOL_ID = previous;
+  }
+};
+
+type InitiateEmailOtpCalls = Readonly<{
+  targets: Array<string>;
+  creates: Array<AdminCreateUserCommandInput>;
+  passwords: Array<AdminSetUserPasswordCommandInput>;
+}>;
+
+/** InitiateAuth reports the user missing once, then returns a session. */
+const createInitiateEmailOtpDependencies = (
+  calls: InitiateEmailOtpCalls,
+  createError: Error | null,
+  setPasswordError: Error | null,
+): InitiateEmailOtpDependencies => ({
+  request: async (target) => {
+    calls.targets.push(target);
+    if (calls.targets.length === 1) throw cognitoError("UserNotFoundException", 400);
+    return { Session: "otp-session" };
+  },
+  adminCreateUser: async (input) => {
+    calls.creates.push(input);
+    if (createError !== null) throw createError;
+    return { $metadata: {} };
+  },
+  adminSetUserPassword: async (input) => {
+    calls.passwords.push(input);
+    if (setPasswordError !== null) throw setPasswordError;
+    return { $metadata: {} };
+  },
+});
+
+test("email OTP creates a missing user as confirmed and verified, then initiates sign-in", async (): Promise<void> => {
+  await withCognitoUserPool(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+
+    const result = await initiateEmailOtpWithDependencies(
+      "new@example.com",
+      createInitiateEmailOtpDependencies(calls, null, null),
+    );
+
+    assert.deepEqual(result, { session: "otp-session" });
+    assert.deepEqual(calls.targets, ["InitiateAuth", "InitiateAuth"]);
+    assert.deepEqual(calls.creates, [{
+      UserPoolId: "eu-west-1_pool",
+      Username: "new@example.com",
+      UserAttributes: [
+        { Name: "email", Value: "new@example.com" },
+        { Name: "email_verified", Value: "true" },
+      ],
+      MessageAction: "SUPPRESS",
+    }]);
+    assert.equal(calls.passwords.length, 1);
+    const [password] = calls.passwords;
+    assert.equal(password?.UserPoolId, "eu-west-1_pool");
+    assert.equal(password?.Username, "new@example.com");
+    assert.equal(password?.Permanent, true);
+    assert.equal(password?.Password?.length, 64);
+  });
+});
+
+test("email OTP proceeds when a concurrent request already created the user", async (): Promise<void> => {
+  await withCognitoUserPool(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+    const exists = new UsernameExistsException({
+      $metadata: { httpStatusCode: 400 },
+      message: "An account with the given email already exists.",
+    });
+
+    const result = await initiateEmailOtpWithDependencies(
+      "race@example.com",
+      createInitiateEmailOtpDependencies(calls, exists, null),
+    );
+
+    assert.deepEqual(result, { session: "otp-session" });
+    assert.deepEqual(calls.targets, ["InitiateAuth", "InitiateAuth"]);
+    assert.equal(calls.creates.length, 1);
+    assert.deepEqual(calls.passwords, []);
+  });
+});
+
+test("email OTP raises any other user creation failure without initiating sign-in", async (): Promise<void> => {
+  await withCognitoUserPool(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+    const invalid = new InvalidParameterException({
+      $metadata: { httpStatusCode: 400 },
+      message: "Invalid email address format.",
+    });
+
+    await assert.rejects(
+      initiateEmailOtpWithDependencies("bad@example.com", createInitiateEmailOtpDependencies(calls, invalid, null)),
+      (error: unknown) => error instanceof Error
+        && error.cause === invalid
+        && error.message === "Cognito AdminCreateUser failed for b***@example.com: InvalidParameterException: Invalid email address format.",
+    );
+    assert.deepEqual(calls.targets, ["InitiateAuth"]);
+    assert.deepEqual(calls.passwords, []);
+  });
+});
+
+test("email OTP raises when the created user cannot get a permanent password", async (): Promise<void> => {
+  await withCognitoUserPool(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+    const failure = new InvalidParameterException({
+      $metadata: { httpStatusCode: 400 },
+      message: "Password does not conform to policy.",
+    });
+
+    await assert.rejects(
+      initiateEmailOtpWithDependencies("new@example.com", createInitiateEmailOtpDependencies(calls, null, failure)),
+      (error: unknown) => error instanceof Error
+        && error.cause === failure
+        && error.message.startsWith("Cognito AdminSetUserPassword failed for n***@example.com after AdminCreateUser"),
+    );
+    assert.deepEqual(calls.targets, ["InitiateAuth"]);
+    assert.equal(calls.creates.length, 1);
   });
 });
