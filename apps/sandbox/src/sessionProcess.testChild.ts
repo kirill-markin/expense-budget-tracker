@@ -57,6 +57,9 @@ const respond = (command: SandboxChildCommand): void => {
       send({ kind: "failure", error: "stub child failure" });
       return;
     case "disconnect":
+      if (process.disconnect === undefined) {
+        throw new Error("Sandbox session test child requires an IPC channel to disconnect");
+      }
       send(resultMessage(command));
       // Answered, then running but unreachable. Closing the channel leaves
       // nothing referenced, so the timer stands in for the work a real child

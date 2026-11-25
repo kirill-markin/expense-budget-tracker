@@ -29,7 +29,7 @@ const createMcpHttpApiTestResources = (): McpHttpApiTestResources => {
     disableExecuteApiEndpoint: true,
   });
   const fn = new lambda.Function(stack, "McpHandler", {
-    runtime: lambda.Runtime.NODEJS_24_X,
+    runtime: lambda.Runtime.NODEJS_26_X,
     handler: "index.handler",
     code: lambda.Code.fromInline("exports.handler = async () => ({ statusCode: 200, body: '{}' });"),
   });

@@ -15,20 +15,20 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.1171.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1177.0",
     "@expense-budget-tracker/agent-shared": "1.8.0",
-    "@hono/node-server": "^2.1.9",
+    "@hono/node-server": "^2.1.11",
     "aws-jwt-verify": "^5.2.1",
-    "hono": "^4.13.19",
+    "hono": "^4.13.22",
     "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.7",
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   },
   "engines": {
-    "node": ">=24.22.3 <25"
+    "node": ">=26.13.1 <27"
   }
 }

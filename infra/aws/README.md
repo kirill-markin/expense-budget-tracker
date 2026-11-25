@@ -23,14 +23,14 @@ Verify that all required tools are installed:
 
 ```bash
 aws --version       # AWS CLI v2+
-node --version      # Node.js 24+
+node --version
 npx cdk --version   # AWS CDK CLI 2.100+
 ```
 
 If anything is missing:
 
 - **AWS CLI v2**: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
-- **Node.js 24**: https://nodejs.org/en/download
+- Install the version in [`.nvmrc`](../../.nvmrc) from the [Node.js downloads](https://nodejs.org/en/download).
 - **CDK CLI**: `npm install -g aws-cdk`
 
 ## Architecture
@@ -68,7 +68,7 @@ MCP client → Cloudflare → API Gateway (HTTP API v2) → MCP Lambda → RDS
 - **ALB** with HTTPS (Cloudflare Origin Certificate), forwards traffic to ECS and uses `/api/live` for liveness checks
 - **Cognito User Pool** (Essentials tier) — passwordless Email OTP auth with a CustomEmailSender Lambda through Resend, managed by the app directly (no Hosted UI)
 - **AWS WAF** on ALB — SQLi/XSS protection, common threat rules, and approximate anonymous `POST auth.*/oauth/register` throttling with a 10-request threshold over AWS's native 60-second evaluation window per real client IP from `CF-Connecting-IP`; malformed values match the block action, while AWS WAF omits missing headers, which is accepted because the ALB only accepts Cloudflare edges that supply the header. Cloudflare edge ingress proves only *some* Cloudflare zone, so the rate limits trust `CF-Connecting-IP` fully only once the optional `x-origin-auth` origin shared secret is configured: it both blocks requests that did not pass through our own zone and confines the rate-limit scope to requests carrying it (see [Origin shared secret](#origin-shared-secret-cloudflare--alb))
-- **Lambda** (Node.js 24) for daily FX rate fetching + EventBridge schedule at 16:00 UTC, and Cognito custom email delivery through Resend
+- **Lambda** ([Node.js images](../../docs/lambda-image-candidates.md)) for daily FX rate fetching + EventBridge schedule at 16:00 UTC, and Cognito custom email delivery through Resend
 - **API Gateway** — one REST API with authorizer + executor Lambdas for ApiKey machine SQL, plus an independent HTTP API v2 and Lambda for stateless Streamable HTTP MCP at `/mcp`; the MCP default `execute-api` endpoint is disabled
 - **MCP capacity budget** — the HTTP API accepts a burst of 10 and then 5 requests/second, while 20 reserved Lambda executions absorb short legitimate spikes without provisioned-concurrency charges. Database safety is enforced independently: under maximum MCP load, 20 Lambda execution environments × the explicit one-connection SQL API pool ceiling can open at most 20 of the t4g.micro's roughly 85 connections, leaving capacity for about 65 more across web, auth, worker, and the machine SQL API; excess Lambda load may be throttled without expanding that database budget
 - **Machine SQL timeout budget** — one 25-second total deadline for `/sql/query`, `/sql/execute`, and compatibility `/sql`, including transaction commit, with bounded cleanup and response headroom below the Regional REST API's 29-second integration timeout and the Lambda's 35-second timeout

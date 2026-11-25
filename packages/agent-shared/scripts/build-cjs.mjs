@@ -13,7 +13,7 @@ await build({
   outExtension: { ".js": ".cjs" },
   platform: "node",
   sourcemap: true,
-  target: "node24",
+  target: "node26",
 });
 
 await mkdir("dist-cjs", { recursive: true });

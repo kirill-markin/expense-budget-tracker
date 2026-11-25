@@ -50,7 +50,7 @@ const requireString = (value: unknown, field: string): string => {
 
 const stubFunction = (stack: cdk.Stack, id: string): lambda.Function =>
   new lambda.Function(stack, id, {
-    runtime: lambda.Runtime.NODEJS_24_X,
+    runtime: lambda.Runtime.NODEJS_26_X,
     handler: "index.handler",
     code: lambda.Code.fromInline("exports.handler = async () => ({});"),
   });

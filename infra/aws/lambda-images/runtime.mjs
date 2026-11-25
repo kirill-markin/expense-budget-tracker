@@ -2,8 +2,8 @@ import { checkServerIdentity } from "node:tls";
 
 export const assertPatchedRuntime = () => {
   const [major, minor, patch] = process.versions.node.split(".").map(Number);
-  if (major !== 24 || minor < 22 || (minor === 22 && patch < 1)) {
-    throw new Error(`Lambda image requires Node >=24.22.1 <25; actual=${process.version}`);
+  if (major !== 26 || minor < 13 || (minor === 13 && patch < 1)) {
+    throw new Error(`Lambda image requires Node >=26.13.1 <27; actual=${process.version}`);
   }
   // A noncanonical IP must not match a canonical IP SAN.
   if (checkServerIdentity("127.000.000.001", { subjectaltname: "IP Address:127.0.0.1" }) === undefined) {

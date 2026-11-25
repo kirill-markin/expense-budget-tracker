@@ -154,14 +154,12 @@ and AJV validation, 15 seconds for the manifest digest, 30 seconds for version
 alignment, 75 seconds for the publisher download, 15 seconds for its checksum
 verification, 30 seconds for extraction, and 60 seconds for DNS authentication.
 Each deadline allows a further five seconds for forced termination. The
-workflow then uses the official Linux ARM64 archive from the audited
-[`mcp-publisher` v1.8.1 release](https://github.com/modelcontextprotocol/registry/releases/tag/v1.8.1)
-and verifies its pinned SHA-256 digest
-`8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4`
-before extraction or execution. Do not replace this pin with `latest` or trust a
-checksum downloaded alongside the archive; a publisher upgrade requires a
-reviewed tag and independently pinned digest. The workflow exposes
-`MCP_PRIVATE_KEY` only to the verified publisher's DNS login step.
+workflow downloads the official Linux ARM64 archive from the
+[release pinned in the publication workflow](../.github/workflows/mcp-registry-publish.yml)
+and verifies its independently pinned SHA-256 digest before extraction or
+execution. A publisher upgrade requires a reviewed tag and independently
+verified digest. The workflow exposes `MCP_PRIVATE_KEY` only to the verified
+publisher's DNS login step.
 
 The publish command has a five-minute execution deadline. The workflow sends
 `TERM` at the deadline and `KILL` ten seconds later if the process has not

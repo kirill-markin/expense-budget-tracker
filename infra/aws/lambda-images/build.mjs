@@ -34,7 +34,7 @@ await build({
   outfile: "/output/index.mjs",
   bundle: true,
   platform: "node",
-  target: "node24",
+  target: "node26",
   format: "esm",
   minify: !sandbox,
   sourcemap: true,
