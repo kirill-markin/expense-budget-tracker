@@ -1,5 +1,5 @@
 # --- Stage 1: Install dependencies ---
-FROM node:24.22.3-alpine AS npm
+FROM node:26.13.1-alpine AS npm
 RUN npm install --global npm@12.2.3
 
 FROM npm AS deps
@@ -24,7 +24,7 @@ COPY apps/web/src/app/styles/reset.css apps/web/src/app/styles/reset.css
 RUN cd apps/admin && ../../node_modules/.bin/next build
 
 # --- Stage 3: Production runner ---
-FROM node:24.22.3-alpine AS runner
+FROM node:26.13.1-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

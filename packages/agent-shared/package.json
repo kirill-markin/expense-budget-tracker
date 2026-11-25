@@ -117,12 +117,12 @@
     "aws-jwt-verify": "^5.2.1"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.7",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   },
   "engines": {
-    "node": ">=24.22.3 <25"
+    "node": ">=26.13.1 <27"
   }
 }

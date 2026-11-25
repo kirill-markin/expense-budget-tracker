@@ -1,6 +1,6 @@
 # Production Lambda images
 
-All eight application Lambdas use the architecture-specific AWS Node 24 digests
+All eight application Lambdas use the architecture-specific AWS Node.js 26 digests
 pinned in [bases.json](../infra/aws/lambda-images/bases.json): seven x86 functions
 and the ARM sandbox. Each function has its own execution role; the email sender
 has decrypt-only access to the retained Cognito encryption key. Construct IDs
@@ -16,7 +16,8 @@ overrides.
 ## Update the images
 
 1. Verify the actual Node version and architecture of new AWS base digests,
-   then update both pins together. Require Node 24.22.1 or later in the 24.x line.
+   then update both pins together. See the [runtime guard](../infra/aws/lambda-images/runtime.mjs)
+   for the required version.
 2. Require the cloud image checks to pass. All artifact builds run in CI.
    Deploy through the normal CDK workflow so each function receives its new
    image digest; updating an ECR tag alone does not update a Lambda.

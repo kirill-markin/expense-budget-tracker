@@ -13,7 +13,7 @@ const synthesizeAuthTemplate = (): Template => {
     env: { account: "123456789012", region: "eu-central-1" },
   });
   const trigger = (id: string): lambda.Function => new lambda.Function(stack, id, {
-    runtime: lambda.Runtime.NODEJS_24_X,
+    runtime: lambda.Runtime.NODEJS_26_X,
     handler: "index.handler",
     code: lambda.Code.fromInline("exports.handler = async (event) => event;"),
   });
