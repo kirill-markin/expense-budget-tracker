@@ -14,10 +14,11 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
+import { parseSupportedLocale, type SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 import { browserError } from "../i18n/browserErrors.js";
 import { createBrowserOtpChallenge } from "../server/otp/otpChallengeStore.js";
 import { getClientIp } from "../server/clientIp.js";
-import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../server/cognitoAuth.js";
+import { initiateBrowserEmailOtp, signInWithPassword, type TokenResult } from "../server/cognitoAuth.js";
 import { getDemoEmailPassword } from "../server/demoEmailAccess.js";
 import { log, maskEmail } from "../server/logger.js";
 import { checkAndRecordOtpSendDecision, type OtpSendDecision } from "../server/otp/otpRateLimit.js";
@@ -37,7 +38,7 @@ type SendCodeDependencies = Readonly<{
   delay: () => Promise<void>;
   createCsrfToken: () => string;
   getClientIp: (context: Context) => string;
-  initiateEmailOtp: (email: string) => Promise<Readonly<{ session: string }>>;
+  initiateEmailOtp: (email: string, locale: SupportedLocale | null) => Promise<Readonly<{ session: string }>>;
   signInWithPassword: (email: string, password: string) => Promise<TokenResult>;
   getDemoEmailPassword: (email: string) => string | null;
   checkAndRecordOtpSendDecision: (normalizedEmail: string, requestIp: string) => Promise<OtpSendDecision>;
@@ -58,9 +59,9 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
   const app = new Hono();
 
   app.post("/api/send-code", async (c) => {
-    let body: { email?: string };
+    let body: { email?: string; locale?: string };
     try {
-      body = await c.req.json<{ email?: string }>();
+      body = await c.req.json<typeof body>();
     } catch {
       return c.json(browserError("invalid_request_body"), 400);
     }
@@ -118,11 +119,12 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
       return c.json(browserError("send_rate_limited"), 429);
     }
 
+    const locale = typeof body.locale === "string" ? parseSupportedLocale(body.locale) : null;
     const csrfToken = dependencies.createCsrfToken();
 
     let otpSessionToken: string;
     try {
-      const [result] = await Promise.all([dependencies.initiateEmailOtp(email), dependencies.delay()]);
+      const [result] = await Promise.all([dependencies.initiateEmailOtp(email, locale), dependencies.delay()]);
       otpSessionToken = await dependencies.createBrowserOtpChallenge(
         email,
         result.session,
@@ -154,7 +156,7 @@ const app = createSendCodeApp({
   delay: jitterDelay,
   createCsrfToken,
   getClientIp,
-  initiateEmailOtp,
+  initiateEmailOtp: initiateBrowserEmailOtp,
   signInWithPassword,
   getDemoEmailPassword,
   checkAndRecordOtpSendDecision,

@@ -107,6 +107,17 @@
       },
       "default": "./dist/crockford.js"
     },
+    "./auth-email-copy": {
+      "import": {
+        "types": "./dist/authEmailCopy.d.ts",
+        "default": "./dist/authEmailCopy.js"
+      },
+      "require": {
+        "types": "./dist-cjs/authEmailCopy.d.cts",
+        "default": "./dist-cjs/authEmailCopy.cjs"
+      },
+      "default": "./dist/authEmailCopy.js"
+    },
     "./locales": {
       "import": {
         "types": "./dist/locales.d.ts",

@@ -304,7 +304,7 @@ export const renderLoginPage = (
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ email: email }),
+          body: JSON.stringify({ email: email, locale: ${serializeScriptValue(locale)} }),
         })
           .then(function(res) {
             return res.json().then(function(data) {

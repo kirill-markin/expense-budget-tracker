@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
+import type { SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 import { createLoginPageApp } from "../routes/loginPage.js";
 import { createSendCodeApp } from "../routes/sendCode.js";
 import { createVerifyCodeApp } from "../routes/verifyCode.js";
@@ -199,6 +200,42 @@ test("the browser send-code route refuses a reserved email domain", async (): Pr
     else process.env.DEMO_PASSWORD_DOSTIP = previousPassword;
     resetDemoEmailAccessConfigForTests();
   }
+});
+
+test("browser send-code validates locale metadata and stores the returned OTP session", async (): Promise<void> => {
+  const requestedLocales: Array<SupportedLocale | null> = [];
+  const app = createSendCodeApp({
+    delay: async () => undefined,
+    createCsrfToken: () => "csrf-token",
+    getClientIp: () => "198.51.100.1",
+    initiateEmailOtp: async (email, locale) => {
+      assert.equal(email, "test@example.net.au");
+      requestedLocales.push(locale);
+      return { session: "cognito-otp-session" };
+    },
+    signInWithPassword: async () => assert.fail("The inbox must be verified"),
+    getDemoEmailPassword: () => null,
+    checkAndRecordOtpSendDecision: async () => "allowed",
+    createBrowserOtpChallenge: async (email, session, csrfToken) => {
+      assert.equal(email, "test@example.net.au");
+      assert.equal(session, "cognito-otp-session");
+      assert.equal(csrfToken, "csrf-token");
+      return "opaque-otp-session";
+    },
+    now: () => 1_700_000_000_000,
+  });
+
+  for (const locale of ["ZH-Hans", "unsupported", ["es"], undefined]) {
+    const response = await app.request("https://auth.example.com/api/send-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "Test@Example.net.au", locale }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, csrfToken: "csrf-token" });
+    assert.match(response.headers.getSetCookie().join("\n"), /^otp_session=opaque-otp-session;/u);
+  }
+  assert.deepEqual(requestedLocales, ["zh", null, null, null]);
 });
 
 test("the browser verify-code route identifies missing sessions for login feedback", async (): Promise<void> => {

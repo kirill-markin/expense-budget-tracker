@@ -5,10 +5,22 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  ENGLISH_AUTH_EMAIL_COPY,
+  getLocalizedSignInEmailCopy,
+  type OtpEmailCopy,
+} from "@expense-budget-tracker/agent-shared/auth-email-copy";
+import {
+  DEFAULT_LOCALE,
+  LOCALE_REGISTRY,
+  parseSupportedLocale,
+  type SupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
 
 type CustomEmailSenderEvent = Readonly<{
   request: Readonly<{
     code?: string;
+    clientMetadata?: Readonly<{ locale?: string }>;
     userAttributes: Readonly<Record<string, string | undefined>>;
   }>;
   triggerSource: string;
@@ -30,6 +42,7 @@ type ResendEmailPayload = Readonly<{
   idempotencyKey: string;
   resendApiKey: string;
   subject: string;
+  text: string;
   toEmail: string;
 }>;
 
@@ -37,6 +50,7 @@ type CustomEmailSenderMessage = Readonly<{
   html: string;
   requiresCode: boolean;
   subject: string;
+  text: string;
 }>;
 
 type ResendErrorMetadata = Readonly<{
@@ -207,19 +221,22 @@ export function buildResendIdempotencyKey(
   return `cognito-custom-email-sender-${getSha256Hex(JSON.stringify(idempotencyFields))}`;
 }
 
-function buildOtpHtml(headline: string, code: string): string {
-  const escapedCode = escapeHtml(code);
-  const escapedHeadline = escapeHtml(headline);
-
-  return [
-    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5;color:#111827\">",
-    `<p>${escapedHeadline}</p>`,
-    "<p style=\"margin:24px 0;font-size:32px;font-weight:700;letter-spacing:0.18em\">",
-    escapedCode,
-    "</p>",
-    "<p>This code expires soon. If you did not request it, you can ignore this email.</p>",
-    "</div>",
-  ].join("");
+function buildOtpMessage(copy: OtpEmailCopy, code: string, locale: SupportedLocale): CustomEmailSenderMessage {
+  const { tag, direction } = LOCALE_REGISTRY[locale];
+  return {
+    subject: copy.subject,
+    html: [
+      `<div lang="${tag}" dir="${direction}" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5;color:#111827">`,
+      `<p>${escapeHtml(copy.headline)}</p>`,
+      '<p dir="ltr" style="margin:24px 0;font-size:32px;font-weight:700;letter-spacing:0.18em">',
+      escapeHtml(code),
+      "</p>",
+      `<p>${escapeHtml(copy.expiry)}</p>`,
+      "</div>",
+    ].join(""),
+    text: [copy.headline, code, copy.expiry].join("\n\n"),
+    requiresCode: true,
+  };
 }
 
 function buildPlainHtml(message: string): string {
@@ -230,17 +247,20 @@ function buildPlainHtml(message: string): string {
   ].join("");
 }
 
-export function buildMessage(triggerSource: string, code: string | null): CustomEmailSenderMessage {
+export function buildMessage(
+  triggerSource: string,
+  code: string | null,
+  locale: SupportedLocale | null,
+): CustomEmailSenderMessage {
   if (triggerSource === "CustomEmailSender_Authentication") {
     if (code === null) {
       throw new Error("Authentication email requires a decrypted code");
     }
 
-    return {
-      subject: "Your Expense Budget Tracker sign-in code",
-      html: buildOtpHtml("Use this sign-in code to continue in Expense Budget Tracker:", code),
-      requiresCode: true,
-    };
+    const localizedCopy = getLocalizedSignInEmailCopy(locale);
+    return localizedCopy !== undefined && locale !== null
+      ? buildOtpMessage(localizedCopy, code, locale)
+      : buildOtpMessage(ENGLISH_AUTH_EMAIL_COPY.signIn, code, DEFAULT_LOCALE);
   }
 
   if (triggerSource === "CustomEmailSender_ForgotPassword") {
@@ -248,11 +268,7 @@ export function buildMessage(triggerSource: string, code: string | null): Custom
       throw new Error("Forgot password email requires a decrypted code");
     }
 
-    return {
-      subject: "Your Expense Budget Tracker password reset code",
-      html: buildOtpHtml("Use this password reset code for Expense Budget Tracker:", code),
-      requiresCode: true,
-    };
+    return buildOtpMessage(ENGLISH_AUTH_EMAIL_COPY.passwordReset, code, DEFAULT_LOCALE);
   }
 
   if (
@@ -265,11 +281,7 @@ export function buildMessage(triggerSource: string, code: string | null): Custom
       throw new Error(`${triggerSource} email requires a decrypted code`);
     }
 
-    return {
-      subject: "Your Expense Budget Tracker verification code",
-      html: buildOtpHtml("Use this verification code for Expense Budget Tracker:", code),
-      requiresCode: true,
-    };
+    return buildOtpMessage(ENGLISH_AUTH_EMAIL_COPY.verification, code, DEFAULT_LOCALE);
   }
 
   if (triggerSource === "CustomEmailSender_AdminCreateUser") {
@@ -277,20 +289,22 @@ export function buildMessage(triggerSource: string, code: string | null): Custom
       throw new Error("Admin create user email requires a decrypted code");
     }
 
-    const temporaryPassword = decodeKnownHtmlEntities(code);
+    const copy = ENGLISH_AUTH_EMAIL_COPY.temporaryPassword;
+    const message = copy.message(decodeKnownHtmlEntities(code));
     return {
-      subject: "Your Expense Budget Tracker temporary password",
-      html: buildPlainHtml(`Your temporary password for Expense Budget Tracker is: ${temporaryPassword}`),
+      subject: copy.subject,
+      html: buildPlainHtml(message),
+      text: message,
       requiresCode: true,
     };
   }
 
   if (triggerSource === "CustomEmailSender_AccountTakeOverNotification") {
+    const copy = ENGLISH_AUTH_EMAIL_COPY.securityNotice;
     return {
-      subject: "Expense Budget Tracker security notice",
-      html: buildPlainHtml(
-        "Expense Budget Tracker detected suspicious activity on your account. Review your recent sign-in attempts.",
-      ),
+      subject: copy.subject,
+      html: buildPlainHtml(copy.message),
+      text: copy.message,
       requiresCode: false,
     };
   }
@@ -449,6 +463,7 @@ export async function sendResendEmail(
           to: [payload.toEmail],
           subject: payload.subject,
           html: payload.html,
+          text: payload.text,
         }),
       });
 
@@ -568,7 +583,9 @@ export async function handleCustomEmailSenderEvent(
     throw new Error("Custom email sender event is missing request.userAttributes.email");
   }
 
-  const message = buildMessage(event.triggerSource, event.request.code === undefined ? null : "");
+  const rawLocale = event.request.clientMetadata?.locale;
+  const locale = typeof rawLocale === "string" ? parseSupportedLocale(rawLocale) : null;
+  const message = buildMessage(event.triggerSource, event.request.code === undefined ? null : "", locale);
   const decryptedCode = message.requiresCode
     ? await dependencies.decryptCode(
       event.request.code ?? "",
@@ -576,7 +593,7 @@ export async function handleCustomEmailSenderEvent(
       environment.keyArn,
     )
     : null;
-  const resolvedMessage = buildMessage(event.triggerSource, decryptedCode);
+  const resolvedMessage = buildMessage(event.triggerSource, decryptedCode, locale);
   const resendApiKey = await dependencies.loadResendApiKey(environment.resendApiKeySecretArn);
   const idempotencyInvocationId = getOptionalTrimmedValue(event.request.code) === null ? randomUUID() : null;
   const idempotencyKey = buildResendIdempotencyKey(
@@ -593,6 +610,7 @@ export async function handleCustomEmailSenderEvent(
     idempotencyKey,
     resendApiKey,
     subject: resolvedMessage.subject,
+    text: resolvedMessage.text,
     toEmail: email,
   }, dependencies.fetchFn);
 
