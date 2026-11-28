@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { fetchWithCsrf } from "@/lib/csrf";
 import { cn } from "@/lib/cn";
 
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import controlStyles from "@/ui/Controls.module.css";
 import settingsStyles from "./SettingsForm.module.css";
 
@@ -17,6 +18,7 @@ type Props = Readonly<{
 export const FilteredCategorySettings = (props: Props): ReactElement => {
   const { filteredCategories, allCategories } = props;
   const { t } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const [selected, setSelected] = useState<ReadonlySet<string>>(
     new Set(filteredCategories ?? []),
   );
@@ -89,7 +91,7 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
                 checked={selected.has(cat)}
                 onChange={() => toggle(cat)}
               />
-              {cat}
+              {categoryLabel(cat)}
             </label>
           ))}
           {allCategories.length === 0 && (
@@ -106,7 +108,9 @@ export const FilteredCategorySettings = (props: Props): ReactElement => {
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className={settingsStyles.error}>{error}</div>}
+        {error !== null && (
+          <div className={settingsStyles.error} role="alert"><strong>{t("common.saveFailed")}</strong> {error}</div>
+        )}
         {saved && <div className={settingsStyles.saved}>{t("common.saved")}</div>}
       </div>
     </div>

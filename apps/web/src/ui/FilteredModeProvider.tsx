@@ -22,6 +22,7 @@ import {
 import { useTableEditorTransition } from "@/ui/tables/shared/TableEditorActivationProvider";
 
 type FilteredModeContextValue = Readonly<{
+  isDemoMode: boolean;
   visibilityMode: VisibilityMode;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
   modeTransitionPending: boolean;
@@ -346,6 +347,7 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     !isDemoMode && visibilityMode === "filtered" ? allowedCategories : null;
 
   const value: FilteredModeContextValue = {
+    isDemoMode,
     visibilityMode: isDemoMode ? "all" : visibilityMode,
     autoFilterDelayMinutes,
     modeTransitionPending,

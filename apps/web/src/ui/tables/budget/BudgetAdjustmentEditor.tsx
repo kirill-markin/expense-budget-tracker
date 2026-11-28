@@ -16,6 +16,7 @@ import {
   isSuccessfulBudgetAdjustmentFlushOutcome,
   recoverBudgetAdjustment,
 } from "@/ui/tables/budget/budgetAdjustmentRecovery";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type {
   BudgetAdjustmentCellLocation,
@@ -100,6 +101,7 @@ export const BudgetAdjustmentEditor = (
     onSettlementSuccess,
   } = props;
   const { t, i18n } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const accessibilityId = useId();
   const rows = controller.getCellRows(
     location,
@@ -731,7 +733,7 @@ export const BudgetAdjustmentEditor = (
                 >
                   {categoryUnavailable && <option value="" disabled />}
                   {categoryOptions.map((category) => (
-                    <option key={category} value={category}>{category}</option>
+                    <option key={category} value={category}>{categoryLabel(category)}</option>
                   ))}
                 </select>
               </label>
@@ -821,7 +823,7 @@ export const BudgetAdjustmentEditor = (
             <div><dt>{t("budget.adjustmentAmount")}</dt><dd><NumericText>{getDeleteAmount(deleteCandidate)}</NumericText></dd></div>
             <div><dt>{t("budget.adjustmentNote")}</dt><dd>{deleteCandidate.draft.noteInput || "—"}</dd></div>
             <div><dt>{t("budget.adjustmentMonth")}</dt><dd>{deleteCandidate.draft.month}</dd></div>
-            <div><dt>{t("budget.adjustmentCategory")}</dt><dd>{deleteCandidate.draft.category}</dd></div>
+            <div><dt>{t("budget.adjustmentCategory")}</dt><dd>{categoryLabel(deleteCandidate.draft.category)}</dd></div>
           </dl>
           <div className={styles.adjustmentModalActions}>
             <button

@@ -43,7 +43,7 @@ const serializeAutoFilterDelayMinutes = (
   autoFilterDelayMinutes: AutoFilterDelayMinutes,
 ): string => autoFilterDelayMinutes === null ? AUTO_FILTER_DELAY_DISABLED_VALUE : String(autoFilterDelayMinutes);
 
-const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes => {
+const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes | undefined => {
   if (raw === AUTO_FILTER_DELAY_DISABLED_VALUE) {
     return null;
   }
@@ -53,7 +53,7 @@ const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes => {
     return value as EnabledAutoFilterDelayMinutes;
   }
 
-  throw new Error(`Unsupported auto filter delay option "${raw}".`);
+  return undefined;
 };
 
 export const UserSettingsForm = (props: Props): ReactElement => {
@@ -72,6 +72,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<boolean>(false);
+  const [invalidDelay, setInvalidDelay] = useState<string | null>(null);
 
   const dirty =
     lowercase !== savedLowercase ||
@@ -223,8 +224,15 @@ export const UserSettingsForm = (props: Props): ReactElement => {
             id="user-auto-filter-delay"
             className={styles.select}
             value={serializeAutoFilterDelayMinutes(autoFilterDelayMinutes)}
+            aria-invalid={invalidDelay !== null}
             aria-describedby="user-auto-filter-delay-hint"
-            onChange={(e) => { setAutoFilterDelayMinutes(parseAutoFilterDelayMinutes(e.target.value)); setSaved(false); }}
+            onChange={(event) => {
+              const rawValue = event.target.value;
+              const delay = parseAutoFilterDelayMinutes(rawValue);
+              setInvalidDelay(delay === undefined ? rawValue : null);
+              setSaved(false);
+              if (delay !== undefined) setAutoFilterDelayMinutes(delay);
+            }}
           >
             <option value={AUTO_FILTER_DELAY_DISABLED_VALUE}>{t("settings.autoFilterDelayNever")}</option>
             {AUTO_FILTER_DELAY_MINUTES.map((delayMinutes) => (
@@ -245,7 +253,12 @@ export const UserSettingsForm = (props: Props): ReactElement => {
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className={styles.error}>{error}</div>}
+        {invalidDelay !== null && (
+          <div className={styles.error} role="alert">{t("settings.invalidAutoFilterDelay", { value: invalidDelay })}</div>
+        )}
+        {error !== null && (
+          <div className={styles.error} role="alert"><strong>{t("common.saveFailed")}</strong> {error}</div>
+        )}
         {saved && <div className={styles.saved}>{t("common.saved")}</div>}
       </div>
     </div>

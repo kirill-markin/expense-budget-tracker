@@ -1,4 +1,5 @@
 import { offsetMonth } from "@/lib/monthUtils";
+import { SETTINGS_ERROR_CODES } from "@/lib/settingsErrors";
 import { clampMonthWindow, PUBLIC_MONTHLY_SHARE_MAX_WINDOW_MONTHS } from "@/server/community/months";
 import { withUserContext } from "@/server/db";
 import type { QueryFn } from "@/server/db/contextRunner";
@@ -32,12 +33,22 @@ type CategoryRow = Readonly<{
   category: string;
 }>;
 
+type MonthlyCategoryShareErrorCode =
+  | typeof SETTINGS_ERROR_CODES.confirmationPhraseMismatch
+  | typeof SETTINGS_ERROR_CODES.invalidMonthRange;
+
 export class MonthlyCategoryShareRequestError extends Error {
-  public constructor(message: string) {
+  public constructor(message: string, public readonly code?: MonthlyCategoryShareErrorCode) {
     super(message);
     this.name = "MonthlyCategoryShareRequestError";
   }
 }
+
+export const createInvalidMonthlyShareMonthRangeError = (): MonthlyCategoryShareRequestError =>
+  new MonthlyCategoryShareRequestError(
+    "monthTo must be the same as or after monthFrom",
+    SETTINGS_ERROR_CODES.invalidMonthRange,
+  );
 
 const MONTH_DATE_PATTERN = /^(\d{4})-(\d{2})-01$/u;
 const TOKEN_INSERT_ATTEMPTS = 3;
@@ -282,7 +293,7 @@ const assertUpdateRange = (share: ShareRow, params: MonthlyCategoryShareSettings
     : currentSettings.monthTo;
 
   if (monthFrom !== null && monthTo !== null && monthTo < monthFrom) {
-    throw new MonthlyCategoryShareRequestError("monthTo must be the same as or after monthFrom");
+    throw createInvalidMonthlyShareMonthRangeError();
   }
 
   if (share.enabled && monthFrom === null) {

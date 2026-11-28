@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
+import { readSettingsError } from "@/lib/settingsErrors";
 import type {
   MonthlyCategoryShareAccessLevel,
   MonthlyCategoryShareItem,
@@ -76,13 +77,6 @@ const sortItemsByCategory = (
 ): ReadonlyArray<MonthlyCategoryShareItem> =>
   [...items].sort((left, right): number => left.category.localeCompare(right.category));
 
-const readSettingsResponse = async (response: Response): Promise<MonthlyCategoryShareSettingsResponse> => {
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return await response.json() as MonthlyCategoryShareSettingsResponse;
-};
-
 const getAccessLevelLabelKey = (accessLevel: MonthlyCategoryShareAccessLevel): string => {
   if (accessLevel === "category_only") return "publicShare.accessCategoryOnly";
   return "publicShare.accessMonthlyValues";
@@ -117,6 +111,13 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     setUpgradeConfirmations(new Set<string>());
   }, []);
 
+  const readSettingsResponse = useCallback(async (response: Response): Promise<MonthlyCategoryShareSettingsResponse> => {
+    if (!response.ok) {
+      throw new Error(await readSettingsError(response, t));
+    }
+    return await response.json() as MonthlyCategoryShareSettingsResponse;
+  }, [t]);
+
   useEffect(() => {
     if (props.demoMode) {
       syncResponse(EMPTY_RESPONSE);
@@ -149,7 +150,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     return () => {
       active = false;
     };
-  }, [props.demoMode, syncResponse]);
+  }, [props.demoMode, readSettingsResponse, syncResponse]);
 
   const selectedCategories = useMemo<ReadonlySet<string>>(
     () => new Set(response.selectedItems.map((item): string => item.category)),
@@ -215,7 +216,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [buildSettingsRequestBody, syncResponse]);
+  }, [buildSettingsRequestBody, readSettingsResponse, syncResponse]);
 
   const saveItems = useCallback(async (
     selectedItems: ReadonlyArray<MonthlyCategoryShareItem>,
@@ -239,7 +240,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [syncResponse]);
+  }, [readSettingsResponse, syncResponse]);
 
   const handleSaveSettings = useCallback(async (): Promise<void> => {
     const savedSettings = await saveSettings("settings");
@@ -282,7 +283,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [monthFrom, saveSettings, syncResponse, t]);
+  }, [monthFrom, readSettingsResponse, saveSettings, syncResponse, t]);
 
   const handleDisable = useCallback(async (): Promise<void> => {
     setPendingAction("disable");
@@ -300,7 +301,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [syncResponse]);
+  }, [readSettingsResponse, syncResponse]);
 
   const handleIndexingToggle = useCallback(async (): Promise<void> => {
     const nextIndexingEnabled = !response.settings.indexingEnabled;
@@ -334,7 +335,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [response.settings.indexingEnabled, syncResponse, t]);
+  }, [readSettingsResponse, response.settings.indexingEnabled, syncResponse, t]);
 
   const handleRotateLink = useCallback(async (): Promise<void> => {
     const confirmed = window.confirm([
@@ -358,7 +359,7 @@ export const PublicMonthlyShareSettings = (props: Props): ReactElement => {
     } finally {
       setPendingAction(null);
     }
-  }, [syncResponse, t]);
+  }, [readSettingsResponse, syncResponse, t]);
 
   const handleAddCategory = useCallback(async (): Promise<void> => {
     if (selectedCategory === "" || selectedAccessLevel === "") return;

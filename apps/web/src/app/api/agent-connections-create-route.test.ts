@@ -5,6 +5,14 @@ import {
   postAgentConnectionRouteWithDeps,
   type CreateAgentConnectionDependencies,
 } from "@/app/api/agent-connections/route";
+import { initI18n } from "@/i18n/i18nConfig";
+import { getMessages } from "@/i18n/serverT";
+import {
+  AGENT_KEY_ACTIVE_COUNT_HEADER,
+  AGENT_KEY_LIMIT_HEADER,
+  readSettingsError,
+  SETTINGS_ERROR_CODE_HEADER,
+} from "@/lib/settingsErrors";
 import type { AuthMode } from "@/server/authMode";
 import {
   MAX_ACTIVE_API_KEY_CONNECTIONS,
@@ -107,19 +115,25 @@ test("postAgentConnectionRouteWithDeps rejects a blank label", async (): Promise
 
 test("postAgentConnectionRouteWithDeps refuses over the active key cap and names it", async (): Promise<void> => {
   const calls: Array<Readonly<{ userId: string; workspaceId: string; label: string }>> = [];
+  const activeCount = MAX_ACTIVE_API_KEY_CONNECTIONS + 1;
   const response = await postAgentConnectionRouteWithDeps(
     createRequest({ label: "Claude Code" }),
     createDependencies("proxy_jwt", calls, {
       kind: "refused_active_limit",
-      activeCount: MAX_ACTIVE_API_KEY_CONNECTIONS,
+      activeCount,
       limit: MAX_ACTIVE_API_KEY_CONNECTIONS,
     }),
   );
 
   assert.equal(response.status, 409);
   assert.match(response.headers.get("content-type") ?? "", /^text\/plain/u);
-  const body = await response.text();
+  assert.equal(response.headers.get(SETTINGS_ERROR_CODE_HEADER), "agent_key_limit_reached");
+  assert.equal(response.headers.get(AGENT_KEY_ACTIVE_COUNT_HEADER), String(activeCount));
+  assert.equal(response.headers.get(AGENT_KEY_LIMIT_HEADER), String(MAX_ACTIVE_API_KEY_CONNECTIONS));
+  const body = await response.clone().text();
   assert.match(body, new RegExp(`limit of ${String(MAX_ACTIVE_API_KEY_CONNECTIONS)} per user`, "u"));
   assert.match(body, /Revoke a key you no longer use/u);
+  const { t } = initI18n("en", getMessages("en"));
+  assert.equal(await readSettingsError(response, t), body);
   assert.deepEqual(calls, [{ userId: "user-1", workspaceId: "workspace-1", label: "Claude Code" }]);
 });

@@ -168,7 +168,7 @@ export const BalancesTable = (props: Props): ReactElement => {
       )}
       {saveError !== null && (
         <div className={alertStyles.alert}>
-          <strong>{t("balances.saveFailed")}</strong>
+          <strong>{t("common.saveFailed")}</strong>
           <span>{saveError}</span>
         </div>
       )}

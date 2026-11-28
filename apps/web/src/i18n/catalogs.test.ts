@@ -10,7 +10,11 @@ const PLURAL_KEY = /^(.+?)(_ordinal)?_(zero|one|two|few|many|other)$/;
 const COUNT_PLACEHOLDER = "{{count}}";
 
 // List the exact plural form when its wording already expresses the count.
-const omittedCountKeys: Readonly<Partial<Record<SupportedLocale, ReadonlyArray<string>>>> = {};
+const omittedCountKeys: Readonly<Partial<Record<SupportedLocale, ReadonlyArray<string>>>> = {
+  ar: ["balances.elapsedDays_one"],
+  fa: ["balances.elapsedDays_one"],
+  he: ["balances.elapsedDays_one"],
+};
 
 const englishMessages = getMessages("en");
 
@@ -117,4 +121,20 @@ test("i18next initializes synchronously with only the requested locale", (): voi
   assert.equal(hebrew.t("nav.settings"), t("he", "nav.settings"));
   assert.equal(spanish.t("common.unpairedTransferMore", { count: 3 }),
     ti("es", "common.unpairedTransferMore", { count: 3 }));
+});
+
+test("transaction counts select their plural form using the total", (): void => {
+  const { t } = initI18n("en", getMessages("en"));
+
+  assert.equal(t("txn.countLabel", { count: 1, shown: 0 }), "0 of 1 entry");
+  assert.equal(t("txn.countLabel", { count: 2, shown: 1 }), "1 of 2 entries");
+});
+
+test("pending English drill-down counts work across locale plural rules", (): void => {
+  for (const locale of ["fa", "ru", "uk", "zh"] as const) {
+    const { t } = initI18n(locale, getMessages(locale));
+    for (const count of [0, 1, 21]) {
+      assert.equal(t("txn.drillDownCount", { count }), `Entries (${count})`, locale);
+    }
+  }
 });

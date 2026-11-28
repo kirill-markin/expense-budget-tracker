@@ -1,5 +1,7 @@
 import { type ReactElement, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import { TRANSACTION_KIND_LABEL_VALUES, transactionKindLabel } from "@/i18n/transactionKindLabel";
 import { cn } from "@/lib/cn";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
@@ -7,8 +9,6 @@ import { CellSelectOverlay } from "@/ui/tables/overlays/CellSelectOverlay";
 import styles from "@/ui/tables/shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
-
-const KIND_OPTIONS: ReadonlyArray<string> = ["income", "spend", "transfer"];
 
 type Props = Readonly<{
   entry: LedgerEntry;
@@ -18,6 +18,7 @@ type Props = Readonly<{
 
 export const EditableKind = (props: Props): ReactElement => {
   const { entry, maskClass, onKindChange } = props;
+  const { t } = useTranslation();
 
   const [open, setOpen] = useState<boolean>(false);
   const [rect, setRect] = useState<Rect | null>(null);
@@ -51,10 +52,10 @@ export const EditableKind = (props: Props): ReactElement => {
       className={cn(styles.cell, !isMasked ? styles.editable : "", !isMasked ? styles.editableSelect : "", maskClass)}
       onClick={isMasked ? undefined : handleClick}
     >
-      {entry.kind}
+      {transactionKindLabel(entry.kind, t)}
       {open && rect !== null && (
         <CellSelectOverlay
-          options={KIND_OPTIONS}
+          options={TRANSACTION_KIND_LABEL_VALUES.map((kind) => ({ value: kind, label: transactionKindLabel(kind, t) }))}
           currentValue={entry.kind}
           allowEmpty={false}
           rect={rect}

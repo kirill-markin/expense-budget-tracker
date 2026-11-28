@@ -4,6 +4,7 @@ import { type ReactElement } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { transactionKindLabel } from "@/i18n/transactionKindLabel";
 import { fetchLiveData } from "@/lib/liveDataFetch";
 import { getCellVisibility } from "@/lib/dataMask";
 import type { FieldHints, LedgerEntry, TransactionsFilterOptions, TransactionsPage } from "@/server/transactions/getTransactions";
@@ -12,6 +13,7 @@ import alertStyles from "@/ui/Alert.module.css";
 import filterStyles from "@/ui/FilterControls.module.css";
 
 import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import { useTransactionColumnOrder } from "./useTransactionColumnOrder";
 import { DataTable } from "@/ui/tables/shared/data-table/DataTable";
 import type { ColumnDef, PageResult } from "@/ui/tables/shared/data-table/types";
@@ -63,6 +65,7 @@ const toDateInputValue = (date: Date): string => {
 export const TransactionsRawTable = (props: Props): ReactElement => {
   const { filterOptions, hints, refreshToken } = props;
   const { t } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const { effectiveAllowlist } = useFilteredMode();
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const { feedback: copyFeedback, copyTransaction } = useTransactionClipboard(
@@ -112,11 +115,11 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
       accountIds: filterOptions.accounts.map((accountId) => ({ value: accountId, label: accountId })),
       categories: [
         { value: "", label: t("txn.filterUncategorized") },
-        ...filterOptions.categories.map((category) => ({ value: category, label: category })),
+        ...filterOptions.categories.map((category) => ({ value: category, label: categoryLabel(category) })),
       ],
       kinds: filterOptions.kinds.map((kind) => ({
         value: kind,
-        label: kind.charAt(0).toUpperCase() + kind.slice(1),
+        label: transactionKindLabel(kind, t),
       })),
       currencies: filterOptions.currencies.map((currency) => ({ value: currency, label: currency })),
       counterparties: [
@@ -124,7 +127,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
         ...filterOptions.counterparties.map((counterparty) => ({ value: counterparty, label: counterparty })),
       ],
     }),
-    [filterOptions, t],
+    [categoryLabel, filterOptions, t],
   );
 
   const activeFilterGroupCount = useMemo<number>(
@@ -310,7 +313,7 @@ export const TransactionsRawTable = (props: Props): ReactElement => {
         </div>
         {!loading && (
           <span className={transactionStyles.filterCount}>
-            {t("txn.countLabel", { shown: rows.length, total })}
+            {t("txn.countLabel", { shown: rows.length, count: total })}
           </span>
         )}
         <button type="button" className={transactionStyles.addRowButton} onClick={addRow}>

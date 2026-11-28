@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { initI18n } from "@/i18n/i18nConfig";
+import { getMessages } from "@/i18n/serverT";
+import { readSettingsError, SETTINGS_ERROR_CODE_HEADER } from "@/lib/settingsErrors";
 import {
   postEnableMonthlyCategoryShareRouteWithDeps,
+  putMonthlyCategoryShareIndexingRouteWithDeps,
   putMonthlyCategoryShareItemsRouteWithDeps,
+  putMonthlyCategoryShareSettingsRouteWithDeps,
   type MonthlyCategoryShareRouteDependencies,
 } from "@/server/api/monthlyCategoryShareSettings";
 import type { MonthlyCategoryShareSettingsResponse } from "@/server/community/monthlyCategoryShareTypes";
+import { createInvalidMonthlyShareMonthRangeError } from "@/server/community/monthlyCategoryShares";
 
 const createResponsePayload = (): MonthlyCategoryShareSettingsResponse => ({
   settings: {
@@ -96,8 +102,58 @@ test("postEnableMonthlyCategoryShareRouteWithDeps rejects a phrase from the wron
   );
 
   assert.equal(response.status, 400);
+  assert.equal(response.headers.get(SETTINGS_ERROR_CODE_HEADER), "confirmation_phrase_mismatch");
   assert.equal(await response.text(), "Confirmation phrase does not match");
   assert.equal(enableCalled, false);
+});
+
+test("putMonthlyCategoryShareIndexingRouteWithDeps identifies a mismatched phrase", async (): Promise<void> => {
+  const response = await putMonthlyCategoryShareIndexingRouteWithDeps(
+    createJsonRequest(
+      "/api/community/monthly-category-share/indexing",
+      "PUT",
+      { indexingEnabled: true, confirmationPhrase: "make public" },
+      "locale=en",
+    ),
+    createDependencies({
+      getUserSettings: async () => ({
+        locale: "en",
+        numberFormat: "1,234.56",
+        dateFormat: "YYYY-MM-DD",
+        autoFilterDelayMinutes: 2,
+        theme: "system",
+        lowercase: false,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get(SETTINGS_ERROR_CODE_HEADER), "confirmation_phrase_mismatch");
+  assert.equal(await response.text(), "Confirmation phrase does not match");
+});
+
+test("monthly share settings identify reversed months in full and partial updates", async (): Promise<void> => {
+  const path = "/api/community/monthly-category-share";
+  const { t } = initI18n("es", getMessages("es"));
+  const fullUpdate = await putMonthlyCategoryShareSettingsRouteWithDeps(
+    createJsonRequest(path, "PUT", { monthFrom: "2026-02", monthTo: "2026-01" }, "locale=es"),
+    createDependencies({}),
+  );
+  const partialUpdate = await putMonthlyCategoryShareSettingsRouteWithDeps(
+    createJsonRequest(path, "PUT", { monthTo: "2026-01" }, "locale=es"),
+    createDependencies({
+      updateMonthlyCategoryShareSettings: async () => {
+        throw createInvalidMonthlyShareMonthRangeError();
+      },
+    }),
+  );
+
+  for (const response of [fullUpdate, partialUpdate]) {
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get(SETTINGS_ERROR_CODE_HEADER), "invalid_month_range");
+    assert.equal(await response.clone().text(), "monthTo must be the same as or after monthFrom");
+    assert.equal(await readSettingsError(response, t), "The end month must be the same as or after the start month.");
+  }
 });
 
 test("postEnableMonthlyCategoryShareRouteWithDeps accepts the localized public-link phrase", async (): Promise<void> => {

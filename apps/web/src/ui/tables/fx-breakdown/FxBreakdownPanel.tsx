@@ -2,6 +2,7 @@
 
 import { type ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
@@ -40,6 +41,7 @@ const formatNative = (value: number, numberFormat: NumberFormat): string => {
 
 export const FxBreakdownPanel = (props: Props): ReactElement => {
   const { month, reportingCurrency, refreshToken, onClose } = props;
+  const { t } = useTranslation();
   const { numberFormat } = useFormat();
 
   const [rows, setRows] = useState<ReadonlyArray<FxBreakdownRow>>([]);
@@ -127,7 +129,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
         />
         <div className={panelStyles.panelHeader}>
           <div>
-            <div className={panelStyles.panelTitle}>FX Breakdown</div>
+            <div className={panelStyles.panelTitle}>{t("budget.fxBreakdown")}</div>
             <div className={panelStyles.panelSubtitle}>{buildFxBreakdownSubtitle(month, closeValuationDate)}</div>
           </div>
           <button className={panelStyles.panelCloseButton} type="button" onClick={closePanel}>
@@ -137,7 +139,7 @@ export const FxBreakdownPanel = (props: Props): ReactElement => {
 
         {error !== null && (
           <div className={alertStyles.alert} style={{ margin: "8px 16px" }}>
-            <strong>Failed to load FX breakdown</strong>
+            <strong>{t("budget.fxBreakdownFailed")}</strong>
             <span>{error}</span>
           </div>
         )}

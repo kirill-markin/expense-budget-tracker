@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/cn";
 import { fetchWithCsrf } from "@/lib/csrf";
+import { readSettingsError } from "@/lib/settingsErrors";
 import type { AgentConnectionRow } from "@/server/agent/connections";
 
 import settingsStyles from "./SettingsForm.module.css";
@@ -156,8 +157,7 @@ export const AgentConnectionsManager = (props: Props): ReactElement => {
         body: JSON.stringify({ label: newLabel.trim() }),
       });
       if (!response.ok) {
-        const text = await response.text();
-        setError(text);
+        setError(await readSettingsError(response, t));
         return;
       }
       const rawResponse: unknown = await response.json();

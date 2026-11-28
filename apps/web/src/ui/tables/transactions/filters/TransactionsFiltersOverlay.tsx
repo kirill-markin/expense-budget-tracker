@@ -82,15 +82,17 @@ const sortOptionsBySelection = (
   options: ReadonlyArray<FilterMultiSelectOption>,
   selectedSet: ReadonlySet<string>,
   query: string,
+  locale: string,
 ): ReadonlyArray<FilterMultiSelectOption> => {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const sorted = [...options].sort((left, right) => left.label.localeCompare(right.label));
+  const normalizedQuery = query.trim().toLocaleLowerCase(locale);
+  const sorted = [...options].sort((left, right) => left.label.localeCompare(right.label, locale));
   const selected = sorted.filter((option) => selectedSet.has(option.value));
   const unselected = sorted.filter((option) => {
     if (selectedSet.has(option.value)) {
       return false;
     }
-    return normalizedQuery.length === 0 || option.label.toLocaleLowerCase().includes(normalizedQuery);
+    return option.label.toLocaleLowerCase(locale).includes(normalizedQuery)
+      || option.value.toLocaleLowerCase(locale).includes(normalizedQuery);
   });
 
   return [...selected, ...unselected];
@@ -166,7 +168,7 @@ const FilterPicker = (props: PickerProps): ReactElement => {
     onToggleValue,
     pickerRef,
   } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -180,8 +182,8 @@ const FilterPicker = (props: PickerProps): ReactElement => {
     [selectedValues],
   );
   const filteredOptions = useMemo<ReadonlyArray<FilterMultiSelectOption>>(
-    () => sortOptionsBySelection(options, selectedSet, search),
-    [options, search, selectedSet],
+    () => sortOptionsBySelection(options, selectedSet, search, i18n.language),
+    [i18n.language, options, search, selectedSet],
   );
 
   return (

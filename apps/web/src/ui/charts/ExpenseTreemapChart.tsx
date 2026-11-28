@@ -8,9 +8,10 @@ import { useTranslation } from "react-i18next";
 
 import { NumericText } from "@/ui/NumericText";
 import { cn } from "@/lib/cn";
-import { isCategoryVisible } from "@/lib/dataMask";
+import { getCellVisibility } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import { useFormat } from "@/ui/FormatProvider";
 import styles from "@/ui/charts/ExpenseTreemapChart.module.css";
 import { useChartSize } from "@/ui/charts/useChartSize";
@@ -24,7 +25,6 @@ type Props = Readonly<{
 }>;
 
 type TreemapDatum = {
-  readonly name: string;
   readonly category: string | null;
   readonly counterparty: string | null;
   readonly children?: ReadonlyArray<TreemapDatum>;
@@ -75,14 +75,13 @@ const cellFontSize = (w: number, h: number): number =>
 const buildHierarchy = (
   entries: ReadonlyArray<LedgerEntry>,
   allowlist: ReadonlySet<string> | null,
-  uncategorizedLabel: string,
 ): TreemapDatum => {
-  const groups = new Map<string, Array<LedgerEntry>>();
+  const groups = new Map<string | null, Array<LedgerEntry>>();
 
   for (const entry of entries) {
     if (entry.amountReport === null) continue;
-    const cat = entry.category ?? uncategorizedLabel;
-    if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
+    const cat = entry.category;
+    if (!getCellVisibility(allowlist, cat).showData) continue;
     const existing = groups.get(cat);
     if (existing !== undefined) {
       existing.push(entry);
@@ -92,17 +91,14 @@ const buildHierarchy = (
   }
 
   return {
-    name: "root",
     category: null,
     counterparty: null,
     children: Array.from(groups.entries()).map(([cat, catEntries]) => ({
-      name: cat,
       category: cat,
       counterparty: null,
       children: catEntries
         .sort((a, b) => Math.abs(b.amountReport ?? 0) - Math.abs(a.amountReport ?? 0))
         .map((e): TreemapDatum => ({
-          name: e.counterparty ?? "",
           category: cat,
           counterparty: e.counterparty,
           leafValue: Math.abs(e.amountReport ?? 0),
@@ -115,6 +111,7 @@ const buildHierarchy = (
 export const ExpenseTreemapChart = (props: Props): ReactElement => {
   const { entries, allowlist, reportingCurrency, onCellClick } = props;
   const { t, i18n } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -124,8 +121,8 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
   const uncategorizedLabel = t("chart.uncategorized");
   const { categoryNodes, colorScale, grandTotal } = useMemo(() => {
-    const data = buildHierarchy(entries, allowlist, uncategorizedLabel);
-    const categories = (data.children ?? []).map((c) => c.name);
+    const data = buildHierarchy(entries, allowlist);
+    const categories = (data.children ?? []).map((c) => JSON.stringify(c.category));
     const cs = scaleOrdinal<string, string>().domain(categories).range(schemeTableau10);
 
     const root = hierarchy(data)
@@ -143,14 +140,13 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
     let total = 0;
     for (const e of entries) {
       if (e.amountReport === null) continue;
-      const cat = e.category ?? uncategorizedLabel;
-      if (allowlist !== null && !isCategoryVisible(allowlist, cat)) continue;
+      if (!getCellVisibility(allowlist, e.category).showData) continue;
       total += Math.abs(e.amountReport);
     }
 
     const rn = root as unknown as RectNode;
     return { categoryNodes: rn.children ?? [], colorScale: cs, grandTotal: total };
-  }, [entries, allowlist, uncategorizedLabel, width, height]);
+  }, [entries, allowlist, width, height]);
 
   const handleLeafEnter = useCallback((event: React.MouseEvent, entry: LedgerEntry): void => {
     const wrap = wrapRef.current;
@@ -174,7 +170,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
   if (categoryNodes.length === 0 && !masked) {
     return (
       <div ref={chartRef} className={styles.wrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Expense treemap">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("chart.expenseTreemap")}>
           <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
             {t("chart.noSpendData")}
           </text>
@@ -192,10 +188,12 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
       )}
 
       <div ref={chartRef} className={cn(styles.wrap, masked ? "data-masked" : "")}>
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Expense treemap">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("chart.expenseTreemap")}>
           {!masked && categoryNodes.map((catNode, ci) => {
-            const catName = catNode.data.name;
-            const color = colorScale(catName);
+            const category = catNode.data.category;
+            const categoryKey = JSON.stringify(category);
+            const catName = category === null ? uncategorizedLabel : categoryLabel(category);
+            const color = colorScale(categoryKey);
             const cw = catNode.x1 - catNode.x0;
             const ch = catNode.y1 - catNode.y0;
             const catTotal = catNode.value ?? 0;
@@ -206,7 +204,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
             const showHeaderAmount = estTextW(headerText, 11) < cw - 8;
 
             return (
-              <g key={catName}>
+              <g key={categoryKey}>
                 <defs>
                   <clipPath id={clipId}>
                     <rect x={catNode.x0} y={catNode.y0} width={cw} height={ch} />
@@ -243,9 +241,9 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
 
                     return (
                       <g
-                        key={`${catName}-${li}`}
+                        key={`${categoryKey}-${li}`}
                         style={{ cursor: "var(--cursor-pointer)" }}
-                        onClick={(e) => { e.stopPropagation(); onCellClick(catName); }}
+                        onClick={(e) => { e.stopPropagation(); onCellClick(category ?? ""); }}
                         onMouseEnter={leaf.data.entry !== undefined ? (e) => handleLeafEnter(e, leaf.data.entry as LedgerEntry) : undefined}
                         onMouseLeave={handleLeafLeave}
                       >
@@ -276,7 +274,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
                   {showHeader && (
                     <g
                       style={{ cursor: "var(--cursor-pointer)" }}
-                      onClick={() => onCellClick(catName)}
+                      onClick={() => onCellClick(category ?? "")}
                     >
                       <rect
                         x={catNode.x0}
@@ -327,7 +325,7 @@ export const ExpenseTreemapChart = (props: Props): ReactElement => {
               <div className={styles.tooltipRow}>{hover.entry.counterparty}</div>
             )}
             <div className={cn(styles.tooltipRow, styles.tooltipMuted)}>
-              {hover.entry.category ?? uncategorizedLabel} · {fmtDate(hover.entry.ts)}
+              {hover.entry.category === null ? uncategorizedLabel : categoryLabel(hover.entry.category)} · {fmtDate(hover.entry.ts)}
             </div>
             {hover.entry.note !== null && (
               <div className={cn(styles.tooltipRow, styles.tooltipMuted, styles.tooltipNote)}>{hover.entry.note}</div>
