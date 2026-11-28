@@ -1,6 +1,6 @@
 /**
  * Login page route. Validates redirect_uri origin against ALLOWED_REDIRECT_URIS,
- * parses Accept-Language for locale, and serves the HTML login page.
+ * negotiates locale, and serves the HTML login page.
  *
  * The redirect_uri may include a path (e.g. https://app.example.com/budget)
  * so the user returns to the page they originally visited after login.
@@ -11,8 +11,15 @@ import {
   getRawQueryByteLength,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
-import { matchAcceptLanguage, parseSupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
-import { setCookie } from "hono/cookie";
+import {
+  APP_LOCALE_COOKIE,
+  AUTH_LOCALE_COOKIE,
+  CARRY_LOCALE_QUERY_PARAM,
+  LOCALE_REGISTRY,
+  matchAcceptLanguage,
+  parseSupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
+import { getCookie } from "hono/cookie";
 import { renderLoginPage } from "../templates/login.js";
 import { resolveBrowserSession } from "../server/oauth/session.js";
 
@@ -37,14 +44,9 @@ const getAllowedOrigins = (): ReadonlyArray<string> => {
   });
 };
 
-const isAllowedRedirectUri = (uri: string): boolean => {
-  try {
-    const origin = new URL(uri).origin;
-    return getAllowedOrigins().includes(origin);
-  } catch {
-    return false;
-  }
-};
+const isBrowserContinuation = (url: URL): boolean =>
+  (url.protocol === "https:" || url.protocol === "http:")
+  && url.origin !== URL.parse(process.env.OAUTH_ISSUER ?? "")?.origin;
 
 export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono => {
   const app = new Hono();
@@ -59,30 +61,36 @@ export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono =>
       return c.text("Missing redirect_uri parameter", 400);
     }
 
-    if (!isAllowedRedirectUri(redirectUri)) {
+    const returnUrl = URL.parse(redirectUri);
+    if (returnUrl === null || !getAllowedOrigins().includes(returnUrl.origin)) {
       return c.text("Invalid redirect_uri", 400);
     }
 
-    const identity = await dependencies.resolveBrowserSession(c);
-    if (identity !== null) return c.redirect(redirectUri, 302);
+    const browserContinuation = isBrowserContinuation(returnUrl);
+    const continuationLocale = browserContinuation ? parseSupportedLocale(returnUrl.searchParams.get("locale")) : null;
+    const requestedLocale = parseSupportedLocale(c.req.query("lang"));
+    const carryLocale = browserContinuation
+      && (requestedLocale !== null || continuationLocale !== null || c.req.query(CARRY_LOCALE_QUERY_PARAM) === "1");
+    const appLocale = parseSupportedLocale(getCookie(c, APP_LOCALE_COOKIE));
+    const authLocale = parseSupportedLocale(getCookie(c, AUTH_LOCALE_COOKIE));
+    const savedLocale = browserContinuation ? appLocale ?? authLocale : authLocale ?? appLocale;
+    const locale = requestedLocale ?? continuationLocale ?? savedLocale ?? matchAcceptLanguage(c.req.header("accept-language"));
 
-    const locale = parseSupportedLocale(c.req.query("lang"))
-      ?? matchAcceptLanguage(c.req.header("accept-language"));
+    // The OAuth authorize continuation carries the original client's parameters.
+    let continuation = redirectUri;
+    if (carryLocale && continuationLocale !== locale) {
+      returnUrl.searchParams.set("locale", LOCALE_REGISTRY[locale].tag);
+      continuation = returnUrl.toString();
+    }
+
+    const identity = await dependencies.resolveBrowserSession(c);
+    if (identity !== null) return c.redirect(continuation, 302);
 
     const domain = process.env.COOKIE_DOMAIN ?? "";
     const websiteUrl = domain.startsWith(".")
       ? `https://${domain.slice(1)}`
       : `https://${domain}`;
-    const html = renderLoginPage(locale, redirectUri, websiteUrl, domain);
-
-    setCookie(c, "locale", locale, {
-      domain: domain === "" ? undefined : domain,
-      path: "/",
-      maxAge: 31536000,
-      secure: true,
-      sameSite: "Lax",
-    });
-    return c.html(html);
+    return c.html(renderLoginPage(locale, continuation, websiteUrl, domain));
   });
 
   return app;

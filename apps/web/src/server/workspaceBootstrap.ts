@@ -1,7 +1,6 @@
 import { type PoolClient } from "pg";
 
 import { type SupportedLocale } from "@/lib/locale";
-import { getLocaleCookie } from "@/lib/localeCookie";
 import { getBrowserTimezoneCookie } from "@/lib/timezoneCookie";
 import { getPool } from "@/server/db/pool";
 import { ensureUserSettingsRow, type UserIdentity, upsertUserIdentity } from "@/server/users";
@@ -116,11 +115,8 @@ export const resolveWorkspaceForIdentity = async (
 export const resolveWorkspaceForCurrentRequestIdentity = async (
   identity: UserIdentity,
   requestedWorkspaceId: string,
+  initialLocale: SupportedLocale,
 ): Promise<ResolvedWorkspace> => {
-  const [initialLocale, initialTimezone] = await Promise.all([
-    getLocaleCookie(),
-    getBrowserTimezoneCookie(),
-  ]);
-
+  const initialTimezone = await getBrowserTimezoneCookie();
   return resolveWorkspaceForIdentity(identity, requestedWorkspaceId, initialLocale, initialTimezone);
 };

@@ -99,7 +99,7 @@ const createChatRequest = (
 const createPostDependencies = (
   overrides: Partial<Parameters<typeof postChatRouteWithDeps>[1]> = {},
 ): Parameters<typeof postChatRouteWithDeps>[1] => ({
-  getLocaleFromRequest: overrides.getLocaleFromRequest ?? (() => "en" as SupportedLocale),
+  getRequestUserLocale: overrides.getRequestUserLocale ?? (async () => "en" as SupportedLocale),
   resolveSnapshotWithRunRecovery: overrides.resolveSnapshotWithRunRecovery ?? (async () => createSnapshot()),
   reserveChatRunStart: overrides.reserveChatRunStart ?? ((sessionId) => ({
     kind: "reserved",

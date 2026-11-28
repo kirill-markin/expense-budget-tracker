@@ -20,9 +20,12 @@ test("user settings read and persist lowercase per user, including disabling it"
       },
     },
   });
-  const { getUserSettings, updateUserSettings } = await import("./userSettings");
+  const { getRequestUserLocale, getUserSettings, updateUserSettings } = await import("./userSettings");
 
-  assert.deepEqual(await getUserSettings("user-1", "workspace-1", "en"), DEFAULT_USER_SETTINGS);
+  assert.deepEqual(await getUserSettings("user-1", "workspace-1", "zh"), {
+    ...DEFAULT_USER_SETTINGS,
+    locale: "zh",
+  });
   rows = [{
     locale: "en",
     number_format: "1,234.56",
@@ -33,6 +36,17 @@ test("user settings read and persist lowercase per user, including disabling it"
   }];
   assert.equal((await getUserSettings("user-1", "workspace-1", "en")).lowercase, true);
   assert.match(calls.at(-1)!.sql, /SELECT .*lowercase FROM user_settings WHERE user_id = \$1/);
+
+  const localChatRequest = new Request("http://localhost:3000/api/chat", {
+    headers: { "accept-language": "ar" },
+  });
+  assert.equal(await getRequestUserLocale(localChatRequest, "local", "local"), "en");
+  const staleAccountCookie = new Request(localChatRequest, { headers: { cookie: "app_locale=ru" } });
+  assert.equal(await getRequestUserLocale(staleAccountCookie, "local", "local"), "en");
+  const demoChatRequest = new Request(localChatRequest, { headers: { cookie: "demo=true; demo_locale=he" } });
+  const previousCallCount = calls.length;
+  assert.equal(await getRequestUserLocale(demoChatRequest, "local", "local"), "he");
+  assert.equal(calls.length, previousCallCount);
 
   for (const lowercase of [false, true]) {
     rows = [{ ...(rows[0] as Record<string, unknown>), lowercase }];

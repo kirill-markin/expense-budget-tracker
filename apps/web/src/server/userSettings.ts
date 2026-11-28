@@ -1,3 +1,5 @@
+import { isDemoModeFromRequest } from "@/lib/demoMode";
+import { getInitialLocale, getLocaleFromRequest } from "@/lib/localeCookie";
 import {
   type SupportedLocale,
   type NumberFormat,
@@ -62,7 +64,7 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
     [userId],
   );
   if (result.rows.length === 0) {
-    return DEFAULT_USER_SETTINGS;
+    return { ...DEFAULT_USER_SETTINGS, locale: initialLocale };
   }
   const row = result.rows[0] as UserSettingsRow;
   return {
@@ -73,6 +75,17 @@ export const getUserSettings = async (userId: string, workspaceId: string, initi
     theme: parseTheme(row.theme),
     lowercase: row.lowercase,
   };
+};
+
+export const getRequestUserLocale = async (
+  request: Request,
+  userId: string,
+  workspaceId: string,
+): Promise<SupportedLocale> => {
+  if (isDemoModeFromRequest(request)) return getLocaleFromRequest(request);
+  const initialLocale = getInitialLocale(request.headers, request.url);
+  const { locale } = await getUserSettings(userId, workspaceId, initialLocale);
+  return locale;
 };
 
 export const updateUserSettings = async (

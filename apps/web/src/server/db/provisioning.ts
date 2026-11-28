@@ -1,7 +1,7 @@
 import { type PoolClient } from "pg";
 
 import { type SupportedLocale } from "@/lib/locale";
-import { getLocaleCookie } from "@/lib/localeCookie";
+import { getInitialLocaleCookie } from "@/lib/localeCookie";
 import { type DbClient, type DbPool } from "@/server/db/contextRunner";
 import { getPool } from "@/server/db/pool";
 import { getCurrentRequestIdentity } from "@/server/db/requestIdentity";
@@ -59,7 +59,7 @@ type ProvisioningDependencies = Readonly<{
 
 const createProvisioningDependencies = (): ProvisioningDependencies => ({
   pool: getPool(),
-  getInitialLocale: getLocaleCookie,
+  getInitialLocale: getInitialLocaleCookie,
   upsertIdentity: async (client, identity) => upsertUserIdentity(client as PoolClient, identity),
   ensureUserSettings: async (client, userId, locale) => ensureUserSettingsRow(client as PoolClient, userId, locale),
   recordOpenDay: async (client) => {

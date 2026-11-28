@@ -28,7 +28,7 @@ test("login clears an invalid non-empty session instead of redirecting in a loop
     assert.match(cookies, /session=;/u);
     assert.match(cookies, /refresh=;/u);
     assert.match(cookies, /logged_in=;/u);
-    assert.match(cookies, /locale=en/u);
+    assert.doesNotMatch(cookies, /locale=/u);
 
     const fixedQuery = `redirect_uri=${encodeURIComponent(redirectUri)}&padding=`;
     const exactQuery = `${fixedQuery}${"x".repeat(MAX_OAUTH_LOGIN_QUERY_BYTES - fixedQuery.length)}`;
@@ -51,7 +51,7 @@ test("login clears an invalid non-empty session instead of redirecting in a loop
   }
 });
 
-test("login shares locale selection while keeping existing cookie and picker values", async (t): Promise<void> => {
+test("login renders supported locale and picker values without remembering a URL hint", async (t): Promise<void> => {
   const previousAllowedRedirects = process.env.ALLOWED_REDIRECT_URIS;
   process.env.ALLOWED_REDIRECT_URIS = "https://app.example.com";
   t.after(() => {
@@ -65,7 +65,7 @@ test("login shares locale selection while keeping existing cookie and picker val
   for (const lang of ["zh", "ZH-hans"]) {
     const response = await app.request(`${loginPath}&lang=${lang}`, { headers: { "Accept-Language": "ar" } });
     assert.equal(response.status, 200);
-    assert.match(response.headers.getSetCookie().join("\n"), /locale=zh;/u);
+    assert.deepEqual(response.headers.getSetCookie(), []);
 
     const html = await response.text();
     assert.match(html, /<html lang="zh-Hans" dir="ltr">/u);
@@ -80,7 +80,7 @@ test("login shares locale selection while keeping existing cookie and picker val
     headers: { "Accept-Language": "ru;q=0, es;q=1.1, he-IL;q=0.8, ar;q=0.7" },
   });
   assert.equal(response.status, 200);
-  assert.match(response.headers.getSetCookie().join("\n"), /locale=he;/u);
+  assert.deepEqual(response.headers.getSetCookie(), []);
   const html = await response.text();
   assert.match(html, /<html lang="he" dir="rtl">/u);
   assert.match(html, /"internal_server_error":"[^"]+/u);

@@ -7,6 +7,7 @@
  * and client JS redirects to redirect_uri.
  */
 import {
+  AUTH_LOCALE_COOKIE,
   LOCALE_REGISTRY,
   SUPPORTED_LOCALES,
   type SupportedLocale,
@@ -238,7 +239,8 @@ export const renderLoginPage = (
       var timezoneCookieDomain = ${serializeScriptValue(cookieDomain)};
 
       document.getElementById("lang-select").addEventListener("change", function() {
-        window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + this.value;
+        document.cookie = "${AUTH_LOCALE_COOKIE}=" + encodeURIComponent(this.value) + "; Path=/; Max-Age=31536000; Secure; SameSite=Lax";
+        window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + encodeURIComponent(this.value);
       });
 
       var csrfToken = "";

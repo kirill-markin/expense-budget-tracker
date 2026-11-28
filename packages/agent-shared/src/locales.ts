@@ -19,6 +19,9 @@ export type SupportedLocale = keyof typeof LOCALE_REGISTRY;
 
 export const SUPPORTED_LOCALES: ReadonlyArray<SupportedLocale> = Object.keys(LOCALE_REGISTRY) as SupportedLocale[];
 export const DEFAULT_LOCALE = "en" satisfies SupportedLocale;
+export const APP_LOCALE_COOKIE = "app_locale";
+export const AUTH_LOCALE_COOKIE = "auth_locale";
+export const CARRY_LOCALE_QUERY_PARAM = "carry_locale";
 
 const parseLocaleTag = (raw: string | null | undefined): Intl.Locale | null => {
   if (raw == null) return null;

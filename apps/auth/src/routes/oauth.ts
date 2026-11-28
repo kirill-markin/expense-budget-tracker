@@ -6,6 +6,7 @@ import {
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
 import {
+  AUTH_LOCALE_COOKIE,
   LOCALE_REGISTRY,
   matchAcceptLanguage,
   parseSupportedLocale,
@@ -481,7 +482,8 @@ app.get("/oauth/authorize", async (c) => {
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin");
-    const locale = parseSupportedLocale(getCookie(c, "locale"))
+    const locale = parseSupportedLocale(getCookie(c, AUTH_LOCALE_COOKIE))
+      ?? parseSupportedLocale(getCookie(c, "locale"))
       ?? matchAcceptLanguage(c.req.header("accept-language"));
     return c.html(renderConsent(client, request, locale));
   } catch (error) {
