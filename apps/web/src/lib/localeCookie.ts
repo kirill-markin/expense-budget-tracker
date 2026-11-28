@@ -41,22 +41,24 @@ const readDemoPageHint = (requestHeaders: Headers, requestUrl: URL): SupportedLo
     : null;
 };
 
+export const getDemoLocalePreference = (requestHeaders: Headers): SupportedLocale =>
+  readLocaleCookie(requestHeaders, DEMO_LOCALE_COOKIE)
+  ?? readLocaleCookie(requestHeaders, LEGACY_LOCALE_COOKIE)
+  ?? readAppLocaleCookie(requestHeaders)
+  ?? matchAcceptLanguage(requestHeaders.get("accept-language"));
+
 const localeFromHeaders = (requestHeaders: Headers, requestUrl: URL): SupportedLocale => {
   const hint = parseLocaleHint(requestUrl.searchParams);
-  const appLocale = readAppLocaleCookie(requestHeaders);
-  const legacyLocale = readLocaleCookie(requestHeaders, LEGACY_LOCALE_COOKIE);
-  const browserLocale = matchAcceptLanguage(requestHeaders.get("accept-language"));
-
-  if (isPublicShare(requestUrl.pathname)) return hint ?? appLocale ?? legacyLocale ?? browserLocale;
-  if (isDemoModeFromHeaders(requestHeaders)) {
-    return hint
-      ?? readDemoPageHint(requestHeaders, requestUrl)
-      ?? readLocaleCookie(requestHeaders, DEMO_LOCALE_COOKIE)
-      ?? legacyLocale
-      ?? appLocale
-      ?? browserLocale;
+  const publicShare = isPublicShare(requestUrl.pathname);
+  if (!publicShare && isDemoModeFromHeaders(requestHeaders)) {
+    return hint ?? readDemoPageHint(requestHeaders, requestUrl) ?? getDemoLocalePreference(requestHeaders);
   }
-  return appLocale ?? hint ?? browserLocale;
+
+  const appLocale = readAppLocaleCookie(requestHeaders);
+  const browserLocale = matchAcceptLanguage(requestHeaders.get("accept-language"));
+  return publicShare
+    ? hint ?? appLocale ?? readLocaleCookie(requestHeaders, LEGACY_LOCALE_COOKIE) ?? browserLocale
+    : appLocale ?? hint ?? browserLocale;
 };
 
 const pathUrl = (path: string): URL => new URL(path, "https://app.invalid");

@@ -56,6 +56,8 @@
   "settings.apiKeys": "کلیدهای API",
   "settings.agentProgramAccess": "دسترسی عامل‌ها و برنامه‌ها",
   "settings.language": "زبان",
+  "settings.languageSearch": "Search languages",
+  "settings.noLanguageMatches": "No matching languages",
   "settings.numberFormat": "قالب اعداد",
   "settings.dateFormat": "قالب تاریخ",
   "settings.autoFilterDelay": "تغییر خودکار به حالت فیلتر شده",

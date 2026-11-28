@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  COMPACT_LOCALE_PICKER_LIMIT,
+  createLocalePickerOptions,
+  normalizeLocaleSearch,
+} from "@expense-budget-tracker/agent-shared/locales";
 import { type ReactElement, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -12,7 +17,7 @@ import {
   type NumberFormat,
   type SupportedLocale,
   DATE_FORMATS,
-  LOCALE_LABELS,
+  LOCALE_REGISTRY,
   NUMBER_FORMATS,
   SUPPORTED_LOCALES,
 } from "@/lib/locale";
@@ -28,6 +33,9 @@ type Props = Readonly<{
   dateFormat: DateFormat;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
 }>;
+
+const localeOptions = createLocalePickerOptions(SUPPORTED_LOCALES, LOCALE_REGISTRY);
+const hasLocaleSearch = localeOptions.length > COMPACT_LOCALE_PICKER_LIMIT;
 
 const AUTO_FILTER_DELAY_DISABLED_VALUE = "never";
 
@@ -58,9 +66,10 @@ const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes | unde
 
 export const UserSettingsForm = (props: Props): ReactElement => {
   const { t } = useTranslation();
-  const { updateAutoFilterDelayMinutes } = useFilteredMode();
+  const { isDemoMode, updateAutoFilterDelayMinutes } = useFilteredMode();
   const { lowercase, setLowercase, savedLowercase, setSavedLowercase } = useLowercase();
   const [locale, setLocale] = useState<SupportedLocale>(props.locale);
+  const [localeSearch, setLocaleSearch] = useState<string>("");
   const [numberFormat, setNumberFormat] = useState<NumberFormat>(props.numberFormat);
   const [dateFormat, setDateFormat] = useState<DateFormat>(props.dateFormat);
   const [autoFilterDelayMinutes, setAutoFilterDelayMinutes] = useState<AutoFilterDelayMinutes>(
@@ -74,6 +83,12 @@ export const UserSettingsForm = (props: Props): ReactElement => {
   const [saved, setSaved] = useState<boolean>(false);
   const [invalidDelay, setInvalidDelay] = useState<string | null>(null);
 
+  const localeQuery = normalizeLocaleSearch(localeSearch);
+  const visibleLocaleOptions = localeOptions.filter(({ id, searchText }) =>
+    id === locale || searchText.includes(localeQuery),
+  );
+  const hasLocaleMatches = visibleLocaleOptions.some(({ searchText }) => searchText.includes(localeQuery));
+
   const dirty =
     lowercase !== savedLowercase ||
     locale !== props.locale ||
@@ -86,9 +101,13 @@ export const UserSettingsForm = (props: Props): ReactElement => {
     setError(null);
     setSaved(false);
 
+    const localeChanged = locale !== props.locale;
+    const demoLocaleSaveLocation = localeChanged && isDemoMode
+      ? { pathname: window.location.pathname, search: window.location.search }
+      : null;
     const body: Record<string, unknown> = {};
     if (lowercase !== savedLowercase) body.lowercase = lowercase;
-    if (locale !== props.locale) body.locale = locale;
+    if (localeChanged) body.locale = locale;
     if (numberFormat !== props.numberFormat) body.numberFormat = numberFormat;
     if (dateFormat !== props.dateFormat) body.dateFormat = dateFormat;
     if (autoFilterDelayMinutes !== savedAutoFilterDelayMinutes) body.autoFilterDelayMinutes = autoFilterDelayMinutes;
@@ -114,7 +133,18 @@ export const UserSettingsForm = (props: Props): ReactElement => {
 
       setSavedLowercase(lowercase);
 
-      if (locale !== props.locale || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat) {
+      const canReload = demoLocaleSaveLocation === null || (
+        window.location.pathname === demoLocaleSaveLocation.pathname &&
+        window.location.search === demoLocaleSaveLocation.search
+      );
+      if (canReload && (localeChanged || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat)) {
+        if (demoLocaleSaveLocation !== null) {
+          const url = new URL(window.location.href);
+          if (url.searchParams.has("locale")) {
+            url.searchParams.delete("locale");
+            window.history.replaceState(window.history.state, "", url);
+          }
+        }
         window.location.reload();
         return;
       }
@@ -128,6 +158,7 @@ export const UserSettingsForm = (props: Props): ReactElement => {
   }, [
     autoFilterDelayMinutes,
     dateFormat,
+    isDemoMode,
     locale,
     lowercase,
     savedLowercase,
@@ -161,6 +192,25 @@ export const UserSettingsForm = (props: Props): ReactElement => {
       </div>
 
       <div className={styles.row}>
+        {hasLocaleSearch && (
+          <>
+            <label className={styles.label} htmlFor="user-locale-search">
+              {t("settings.languageSearch")}
+            </label>
+            <div className={styles.control}>
+              <input
+                id="user-locale-search"
+                type="search"
+                autoComplete="off"
+                dir="auto"
+                className={styles.input}
+                value={localeSearch}
+                aria-controls="user-locale"
+                onChange={(event) => setLocaleSearch(event.target.value)}
+              />
+            </div>
+          </>
+        )}
         <label className={styles.label} htmlFor="user-locale">
           {t("settings.language")}
         </label>
@@ -171,11 +221,16 @@ export const UserSettingsForm = (props: Props): ReactElement => {
             value={locale}
             onChange={(e) => { setLocale(e.target.value as SupportedLocale); setSaved(false); }}
           >
-            {SUPPORTED_LOCALES.map((loc) => (
-              <option key={loc} value={loc}>{LOCALE_LABELS[loc]}</option>
+            {visibleLocaleOptions.map(({ id, tag, direction, label }) => (
+              <option key={id} value={id} lang={tag} dir={hasLocaleSearch ? direction : undefined}>{label}</option>
             ))}
           </select>
         </div>
+        {hasLocaleSearch && (
+          <span className={styles.label} role="status">
+            {hasLocaleMatches ? "" : t("settings.noLanguageMatches")}
+          </span>
+        )}
       </div>
 
       <div className={styles.row}>

@@ -69,6 +69,8 @@ test("login renders supported locale and picker values without remembering a URL
 
     const html = await response.text();
     assert.match(html, /<html lang="zh-Hans" dir="ltr">/u);
+    assert.match(html, /<select id="lang-select" aria-label="Language">/u);
+    assert.doesNotMatch(html, /<input[^>]+id="lang-search"/u);
     assert.match(html, /<option value="zh" selected>中文<\/option>/u);
     assert.deepEqual(
       Array.from(html.matchAll(/<option value="([^"]+)"/gu), (match) => match[1]),

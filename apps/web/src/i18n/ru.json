@@ -56,6 +56,8 @@
   "settings.apiKeys": "API-ключи",
   "settings.agentProgramAccess": "Доступ агентов и программ",
   "settings.language": "Язык",
+  "settings.languageSearch": "Search languages",
+  "settings.noLanguageMatches": "No matching languages",
   "settings.numberFormat": "Формат чисел",
   "settings.dateFormat": "Формат даты",
   "settings.autoFilterDelay": "Автоматически включать режим фильтрации",

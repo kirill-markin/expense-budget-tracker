@@ -105,3 +105,40 @@ export const createLocaleMatcher = <Locale extends string>(
 };
 
 export const { parseSupportedLocale, matchAcceptLanguage } = createLocaleMatcher(LOCALE_REGISTRY, DEFAULT_LOCALE);
+
+export const COMPACT_LOCALE_PICKER_LIMIT = 8;
+
+export const normalizeLocaleSearch = (value: string): string =>
+  value.trim().normalize("NFKC").toLowerCase();
+
+type LocalePickerOption<Locale extends string> = Readonly<{
+  id: Locale;
+  tag: string;
+  direction: LocaleMetadata["direction"];
+  label: string;
+  searchText: string;
+}>;
+
+export const createLocalePickerOptions = <Locale extends string>(
+  ids: ReadonlyArray<Locale>,
+  registry: Readonly<Record<NoInfer<Locale>, LocaleMetadata>>,
+): ReadonlyArray<LocalePickerOption<Locale>> => {
+  const englishNames = ids.length > COMPACT_LOCALE_PICKER_LIMIT
+    ? new Intl.DisplayNames("en", { type: "language" })
+    : null;
+
+  return ids.map((id) => {
+    const { tag, direction, label } = registry[id];
+    if (englishNames === null) return { id, tag, direction, label, searchText: "" };
+
+    const englishName = englishNames.of(tag);
+    if (englishName === undefined) throw new RangeError(`No English name for locale tag "${tag}"`);
+    return {
+      id,
+      tag,
+      direction,
+      label: tag.includes("-") ? `${label} (${tag})` : label,
+      searchText: normalizeLocaleSearch([label, englishName, tag, id].join("\n")),
+    };
+  });
+};

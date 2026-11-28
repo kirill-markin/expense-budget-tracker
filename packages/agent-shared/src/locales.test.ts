@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  COMPACT_LOCALE_PICKER_LIMIT,
   createLocaleMatcher,
+  createLocalePickerOptions,
   LOCALE_REGISTRY,
   matchAcceptLanguage,
+  normalizeLocaleSearch,
   normalizeLocaleTag,
   parseSupportedLocale,
   SUPPORTED_LOCALES,
@@ -83,4 +86,29 @@ test("browser negotiation skips malformed entries and defaults after named prefe
   for (const header of [null, undefined, "", "no-NO, es;q=0, *", ...malformedRanges]) {
     assert.equal(matchAcceptLanguage(header), "en");
   }
+});
+
+test("the eight current locale options retain their native labels and order", (): void => {
+  const options = createLocalePickerOptions(SUPPORTED_LOCALES, LOCALE_REGISTRY);
+  assert.equal(options.length, COMPACT_LOCALE_PICKER_LIMIT);
+  assert.deepEqual(options.map(({ id }) => id), SUPPORTED_LOCALES);
+  assert.deepEqual(options.map(({ label }) => label), SUPPORTED_LOCALES.map((id) => LOCALE_REGISTRY[id].label));
+});
+
+test("a longer picker distinguishes script and region variants and searches names and tags", (): void => {
+  const ids = Object.keys(regionalRegistry) as Array<keyof typeof regionalRegistry>;
+  const options = createLocalePickerOptions(ids, regionalRegistry);
+  const search = (value: string): ReadonlyArray<string> =>
+    options.filter(({ searchText }) => searchText.includes(normalizeLocaleSearch(value))).map(({ id }) => id);
+
+  assert.ok(options.length > COMPACT_LOCALE_PICKER_LIMIT);
+  assert.equal(options.find(({ id }) => id === "zh")?.label, "中文 (zh-Hans)");
+  assert.equal(options.find(({ id }) => id === "zh-Hant")?.label, "繁體中文 (zh-Hant)");
+  assert.equal(options.find(({ id }) => id === "es-MX")?.label, "Español de México (es-MX)");
+  assert.deepEqual(search("  MEXICAN SPANISH  "), ["es-MX"]);
+  assert.deepEqual(search("Español latinoamericano"), ["es-419"]);
+  assert.deepEqual(search("العربية"), ["ar"]);
+  assert.deepEqual(search("Simplified Chinese"), ["zh"]);
+  assert.deepEqual(search("ＺＨ－ＨＡＮＴ－ＨＫ"), ["zh-Hant-HK"]);
+  assert.deepEqual(search("no such language"), []);
 });

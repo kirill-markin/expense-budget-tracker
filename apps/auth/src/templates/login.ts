@@ -8,6 +8,8 @@
  */
 import {
   AUTH_LOCALE_COOKIE,
+  COMPACT_LOCALE_PICKER_LIMIT,
+  createLocalePickerOptions,
   LOCALE_REGISTRY,
   SUPPORTED_LOCALES,
   type SupportedLocale,
@@ -25,6 +27,8 @@ const loginLocales: ReadonlyArray<SupportedLocale> = [
   ...firstLoginLocales,
   ...SUPPORTED_LOCALES.filter((locale) => !firstLoginLocales.includes(locale)),
 ];
+const loginLocaleOptions = createLocalePickerOptions(loginLocales, LOCALE_REGISTRY);
+const hasLocaleSearch = loginLocaleOptions.length > COMPACT_LOCALE_PICKER_LIMIT;
 
 export const renderLoginPage = (
   locale: SupportedLocale,
@@ -167,6 +171,36 @@ export const renderLoginPage = (
       cursor: pointer;
     }
 
+    .login-lang select:focus-visible,
+    .login-lang-search input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .login-lang--searchable {
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .login-lang--searchable select {
+      max-inline-size: 100%;
+    }
+
+    .login-lang-search {
+      inline-size: 100%;
+    }
+
+    .login-lang-search .login-input {
+      margin-bottom: 0;
+    }
+
+    .login-lang-search .login-label,
+    .login-lang-search-status {
+      color: var(--text);
+      font-size: 13px;
+    }
+
     .hidden { display: none; }
 
     .login-header {
@@ -209,9 +243,19 @@ export const renderLoginPage = (
       <a href="${escapeHtml(websiteUrl)}">Expense Budget Tracker</a>
     </header>
     <div class="login-card">
-      <div class="login-lang">
-        <select id="lang-select">
-          ${loginLocales.map((l) => `<option value="${l}"${l === locale ? " selected" : ""}>${escapeHtml(LOCALE_REGISTRY[l].label)}</option>`).join("\n          ")}
+      <div class="login-lang${hasLocaleSearch ? " login-lang--searchable" : ""}">
+        ${hasLocaleSearch ? `<div class="login-lang-search">
+          <label class="login-label" for="lang-search">${escapeHtml(t(locale, "languageSearch"))}</label>
+          <input class="login-input" id="lang-search" type="search" autocomplete="off" dir="auto" aria-controls="lang-select">
+          <div id="lang-search-status" class="login-lang-search-status" role="status"></div>
+        </div>` : ""}
+        <select id="lang-select" aria-label="${escapeHtml(t(locale, "language"))}">
+          ${loginLocaleOptions.map(({ id, tag, direction, label, searchText }) => {
+            const searchAttributes = hasLocaleSearch
+              ? ` lang="${escapeHtml(tag)}" dir="${direction}" data-locale-search="${escapeHtml(searchText)}"`
+              : "";
+            return `<option value="${escapeHtml(id)}"${id === locale ? " selected" : ""}${searchAttributes}>${escapeHtml(label)}</option>`;
+          }).join("\n          ")}
         </select>
       </div>
       <h1 class="login-title">${escapeHtml(t(locale, "title"))}</h1>
@@ -383,6 +427,30 @@ export const renderLoginPage = (
       });
     })();
   </script>
+  ${hasLocaleSearch ? `<script>
+    (function() {
+      var select = document.getElementById("lang-select");
+      var search = document.getElementById("lang-search");
+      var status = document.getElementById("lang-search-status");
+      var options = Array.from(select.options);
+      var noMatchesLabel = ${serializeScriptValue(t(locale, "noLanguageMatches"))};
+
+      search.addEventListener("input", function() {
+        var query = search.value.trim().normalize("NFKC").toLowerCase();
+        var selected = select.value;
+        var hasMatches = false;
+        var visibleOptions = options.filter(function(option) {
+          var matches = option.dataset.localeSearch.includes(query);
+          hasMatches = hasMatches || matches;
+          return matches || option.value === selected;
+        });
+        select.replaceChildren(...visibleOptions);
+        select.value = selected;
+        var message = hasMatches ? "" : noMatchesLabel;
+        if (status.textContent !== message) status.textContent = message;
+      });
+    })();
+  </script>` : ""}
 </body>
 </html>`;
 };

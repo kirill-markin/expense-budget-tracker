@@ -11,10 +11,6 @@ import type { ThemePreference } from "@/lib/theme";
 export { DEFAULT_LOCALE, LOCALE_REGISTRY, SUPPORTED_LOCALES, parseSupportedLocale };
 export type { SupportedLocale };
 
-export const LOCALE_LABELS: Readonly<Record<SupportedLocale, string>> = Object.fromEntries(
-  SUPPORTED_LOCALES.map((locale) => [locale, LOCALE_REGISTRY[locale].label]),
-) as Record<SupportedLocale, string>;
-
 export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(
   SUPPORTED_LOCALES.filter((locale) => LOCALE_REGISTRY[locale].direction === "rtl"),
 );
