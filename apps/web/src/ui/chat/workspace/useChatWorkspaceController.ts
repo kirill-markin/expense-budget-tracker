@@ -15,6 +15,8 @@ import {
 } from "next/navigation";
 import { useTranslation } from "react-i18next";
 
+import { parseLocaleHint } from "@/lib/localeHint";
+
 import {
   getMainContentInvalidationSourceId,
   publishMainContentInvalidation,
@@ -72,6 +74,12 @@ const getInitialChatPageVisibility = (): ChatPageVisibility =>
     : document.visibilityState;
 
 type NavigationMode = "none" | "push" | "replace";
+
+const readChatDemoPreviewUrl = (scopeMode: ChatSelectionScope["mode"]): URL | null => {
+  if (scopeMode !== "demo" || window.location.pathname !== "/chat") return null;
+  const url = new URL(window.location.href);
+  return parseLocaleHint(url.searchParams) === null ? null : url;
+};
 
 export type ChatWorkspaceInvalidationSource = "live" | "snapshot";
 
@@ -846,7 +854,9 @@ export const useChatWorkspaceController = (
       return;
     }
 
-    const url = buildChatTargetUrl(target);
+    const preview = readChatDemoPreviewUrl(stableScope.mode);
+    const url = buildChatTargetUrl(target, preview?.searchParams ?? null);
+    const href = `${url}${preview?.hash ?? ""}`;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     const decision = resolveChatControllerNavigationWrite(
       currentUrl,
@@ -862,12 +872,12 @@ export const useChatWorkspaceController = (
 
     navigationGenerationRef.current = decision.generation;
     if (decision.navigationMode === "push") {
-      router.push(url, { scroll: false });
+      router.push(href, { scroll: false });
       return;
     }
 
-    router.replace(url, { scroll: false });
-  }, [router]);
+    router.replace(href, { scroll: false });
+  }, [router, stableScope.mode]);
 
   const persistSelectedTarget = useCallback((
     target: ChatTarget,
@@ -1464,8 +1474,9 @@ export const useChatWorkspaceController = (
     if (controllerNavigationObservation.kind === "restore") {
       controllerNavigationRef.current =
         controllerNavigationObservation.controllerNavigation;
+      const preview = readChatDemoPreviewUrl(stableScope.mode);
       router.replace(
-        controllerNavigationObservation.url,
+        `${controllerNavigationObservation.url}${preview?.hash ?? ""}`,
         { scroll: false },
       );
       return;
@@ -1527,6 +1538,7 @@ export const useChatWorkspaceController = (
     router,
     searchParamsString,
     selectTarget,
+    stableScope.mode,
   ]);
 
   const setHistoryOpen = useCallback((open: boolean): void => {

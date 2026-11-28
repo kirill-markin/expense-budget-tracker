@@ -21,6 +21,7 @@ import {
   NUMBER_FORMATS,
   SUPPORTED_LOCALES,
 } from "@/lib/locale";
+import { parseLocaleHint, reloadWithoutLocaleHint } from "@/lib/localeHint";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 import { useLowercase } from "@/ui/LowercaseProvider";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -29,6 +30,7 @@ import styles from "./SettingsForm.module.css";
 
 type Props = Readonly<{
   locale: SupportedLocale;
+  effectiveLocale: SupportedLocale;
   numberFormat: NumberFormat;
   dateFormat: DateFormat;
   autoFilterDelayMinutes: AutoFilterDelayMinutes;
@@ -62,6 +64,11 @@ const parseAutoFilterDelayMinutes = (raw: string): AutoFilterDelayMinutes | unde
   }
 
   return undefined;
+};
+
+const handleUseSavedLanguage = (): void => {
+  const url = new URL(window.location.href);
+  if (parseLocaleHint(url.searchParams) !== null) reloadWithoutLocaleHint(url);
 };
 
 export const UserSettingsForm = (props: Props): ReactElement => {
@@ -139,13 +146,10 @@ export const UserSettingsForm = (props: Props): ReactElement => {
       );
       if (canReload && (localeChanged || numberFormat !== props.numberFormat || dateFormat !== props.dateFormat)) {
         if (demoLocaleSaveLocation !== null) {
-          const url = new URL(window.location.href);
-          if (url.searchParams.has("locale")) {
-            url.searchParams.delete("locale");
-            window.history.replaceState(window.history.state, "", url);
-          }
+          reloadWithoutLocaleHint(new URL(window.location.href));
+        } else {
+          window.location.reload();
         }
-        window.location.reload();
         return;
       }
 
@@ -230,6 +234,17 @@ export const UserSettingsForm = (props: Props): ReactElement => {
           <span className={styles.label} role="status">
             {hasLocaleMatches ? "" : t("settings.noLanguageMatches")}
           </span>
+        )}
+        {isDemoMode && props.effectiveLocale !== props.locale && (
+          <button
+            id="user-use-saved-language"
+            type="button"
+            className={styles.inlineLink}
+            onClick={handleUseSavedLanguage}
+            disabled={saving}
+          >
+            {t("settings.useSavedLanguage")}
+          </button>
         )}
       </div>
 

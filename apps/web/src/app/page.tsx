@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { isDemoMode } from "@/lib/demoMode";
 import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
 import { getLocaleCookie } from "@/lib/localeCookie";
@@ -7,6 +5,7 @@ import { NAV_LINKS } from "@/lib/navigation";
 import { t } from "@/i18n/serverT";
 import { extractUserIdFromHeaders, extractWorkspaceIdFromHeaders } from "@/server/userId";
 import { getUserSettings } from "@/server/userSettings";
+import { DemoLocaleLink } from "@/ui/DemoLocaleLink";
 import { headers } from "next/headers";
 
 export default async function HomePage() {
@@ -34,7 +33,7 @@ export default async function HomePage() {
         <div>
           <ul className="link-list">
             {NAV_LINKS.map((link) => (
-              <li key={link.href}><Link href={link.href}>{t(locale, link.labelKey)}</Link></li>
+              <li key={link.href}><DemoLocaleLink href={link.href}>{t(locale, link.labelKey)}</DemoLocaleLink></li>
             ))}
           </ul>
         </div>

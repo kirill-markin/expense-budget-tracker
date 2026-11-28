@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import type { AutoFilterDelayMinutes } from "@/lib/locale";
+import { parseLocaleHint, reloadWithoutLocaleHint } from "@/lib/localeHint";
 import {
   getAutoFilterDelayMs,
   parseStoredLastActiveAt,
@@ -203,7 +204,12 @@ export const FilteredModeProvider = (props: ProviderProps): ReactElement => {
     if (isDemoMode) {
       localStorage.setItem(STORAGE_MODE_KEY, request.target);
       document.cookie = "demo=; path=/; max-age=0";
-      window.location.reload();
+      const url = new URL(window.location.href);
+      if (parseLocaleHint(url.searchParams) !== null) {
+        reloadWithoutLocaleHint(url);
+      } else {
+        window.location.reload();
+      }
       return;
     }
 

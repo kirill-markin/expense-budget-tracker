@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 
 import { readChatCookies } from "@/lib/chatCookies";
@@ -26,6 +25,7 @@ import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider, ChatLayoutShell } from "@/ui/chat";
 import type { ChatDraftScope } from "@/ui/chat/shell/layout/chatDraftStorage";
 import { CurrencySelector } from "@/ui/CurrencySelector";
+import { DemoLocaleLink } from "@/ui/DemoLocaleLink";
 import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
 import { FormatProvider } from "@/ui/FormatProvider";
@@ -206,10 +206,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                         )}
                         <FilteredBanner />
                         <header className="topbar">
-                          <Link href="/" className="topbar-brand">
+                          <DemoLocaleLink href="/" className="topbar-brand">
                             <span className="brand-full">{t(locale, "brand.full")}</span>
                             <span className="brand-short">{t(locale, "brand.short")}</span>
-                          </Link>
+                          </DemoLocaleLink>
                           <div className="topbar-controls">
                             <ModeToggle isDemoMode={demo} />
                             <div className="topbar-actions topbar-end">

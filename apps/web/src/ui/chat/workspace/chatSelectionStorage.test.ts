@@ -275,11 +275,24 @@ test("fullscreen URL parsing validates one explicit historical session", (): voi
 
 test("fullscreen target URLs are canonical for sessions and local drafts", (): void => {
   assert.equal(
-    buildChatTargetUrl({ kind: "session", sessionId: "session/one" }),
+    buildChatTargetUrl({ kind: "session", sessionId: "session/one" }, null),
     "/chat?session=session%2Fone",
   );
   assert.equal(
-    buildChatTargetUrl({ kind: "draft", draftId: "draft-1" }),
+    buildChatTargetUrl({ kind: "draft", draftId: "draft-1" }, null),
     "/chat",
   );
+});
+
+test("Demo preview chat target URLs preserve other query values", (): void => {
+  const preview = new URLSearchParams("locale=he&view=one&session=before&view=two");
+  assert.equal(
+    buildChatTargetUrl({ kind: "session", sessionId: "session/one" }, preview),
+    "/chat?locale=he&view=one&session=session%2Fone&view=two",
+  );
+  assert.equal(
+    buildChatTargetUrl({ kind: "draft", draftId: "draft-1" }, preview),
+    "/chat?locale=he&view=one&view=two",
+  );
+  assert.equal(preview.get("session"), "before");
 });

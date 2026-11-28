@@ -7,6 +7,9 @@ import {
 import { headers } from "next/headers";
 
 import { isDemoModeFromHeaders } from "@/lib/demoMode";
+import { parseLocaleHint } from "@/lib/localeHint";
+
+export { parseLocaleHint };
 
 const DEMO_LOCALE_COOKIE = "demo_locale";
 const LEGACY_LOCALE_COOKIE = "locale";
@@ -26,9 +29,6 @@ const readLocaleCookie = (requestHeaders: Headers, name: string): SupportedLocal
 
 export const readAppLocaleCookie = (requestHeaders: Headers): SupportedLocale | null =>
   readLocaleCookie(requestHeaders, APP_LOCALE_COOKIE);
-
-export const parseLocaleHint = (searchParams: URLSearchParams): SupportedLocale | null =>
-  parseSupportedLocale(searchParams.get("locale"));
 
 const isPublicShare = (pathname: string): boolean => pathname.startsWith("/share/monthly/");
 

@@ -58,6 +58,7 @@
   "settings.language": "שפה",
   "settings.languageSearch": "Search languages",
   "settings.noLanguageMatches": "No matching languages",
+  "settings.useSavedLanguage": "Use saved language",
   "settings.numberFormat": "תבנית מספרים",
   "settings.dateFormat": "תבנית תאריך",
   "settings.autoFilterDelay": "מעבר אוטומטי למצב מסונן",

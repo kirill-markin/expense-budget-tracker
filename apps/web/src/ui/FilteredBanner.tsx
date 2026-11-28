@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
+import { DemoLocaleLink } from "@/ui/DemoLocaleLink";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
 
 export const FilteredBanner = (): ReactElement | null => {
@@ -26,7 +26,7 @@ export const FilteredModeSettings = ({ className }: Readonly<{ className: string
   const { t } = useTranslation();
 
   return (
-    <Link
+    <DemoLocaleLink
       href="/settings"
       className={className}
       aria-label={t("filtered.settingsLink")}
@@ -37,6 +37,6 @@ export const FilteredModeSettings = ({ className }: Readonly<{ className: string
         <path d="m9 3-1 3-3 1 1 3-2 2 2 2-1 3 3 1 1 3h6l1-3 3-1-1-3 2-2-2-2 1-3-3-1-1-3Z" />
         <circle cx="12" cy="12" r="3" />
       </svg>
-    </Link>
+    </DemoLocaleLink>
   );
 };

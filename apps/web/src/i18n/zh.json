@@ -58,6 +58,7 @@
   "settings.language": "语言",
   "settings.languageSearch": "Search languages",
   "settings.noLanguageMatches": "No matching languages",
+  "settings.useSavedLanguage": "Use saved language",
   "settings.numberFormat": "数字格式",
   "settings.dateFormat": "日期格式",
   "settings.autoFilterDelay": "自动切换到筛选模式",
