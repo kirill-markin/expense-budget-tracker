@@ -14,6 +14,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { setCookie } from "hono/cookie";
+import { browserError } from "../i18n/browserErrors.js";
 import { createBrowserOtpChallenge } from "../server/otp/otpChallengeStore.js";
 import { getClientIp } from "../server/clientIp.js";
 import { initiateEmailOtp, signInWithPassword, type TokenResult } from "../server/cognitoAuth.js";
@@ -61,13 +62,13 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
     try {
       body = await c.req.json<{ email?: string }>();
     } catch {
-      return c.json({ error: "Invalid request body" }, 400);
+      return c.json(browserError("invalid_request_body"), 400);
     }
 
     const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
 
     if (!EMAIL_RE.test(email) || email.length > 256) {
-      return c.json({ error: "Invalid email" }, 400);
+      return c.json(browserError("invalid_email"), 400);
     }
 
     const demoPassword = dependencies.getDemoEmailPassword(email);
@@ -86,7 +87,7 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
         return c.json({ ok: true, idToken: tokens.idToken, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn });
       } catch (err) {
         log({ domain: "auth", action: "send_code_demo_sign_in_error", error: err instanceof Error ? err.message : String(err) });
-        return c.json({ error: "Demo sign-in failed" }, 500);
+        return c.json(browserError("demo_sign_in_failed"), 500);
       }
     }
 
@@ -98,7 +99,7 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
         reason: "undeliverable_email",
         maskedEmail: maskEmail(email),
       });
-      return c.json({ error: "Invalid email" }, 400);
+      return c.json(browserError("invalid_email"), 400);
     }
 
     const requestIp = dependencies.getClientIp(c);
@@ -108,13 +109,13 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
       decision = await dependencies.checkAndRecordOtpSendDecision(email, requestIp);
     } catch (err) {
       log({ domain: "auth", action: "error", error: err instanceof Error ? err.message : String(err) });
-      return c.json({ error: "Failed to send code — please try again" }, 500);
+      return c.json(browserError("send_code_failed"), 500);
     }
 
     if (decision !== "allowed") {
       await dependencies.delay();
       log({ domain: "auth", action: "send_code_rate_limited", maskedEmail: maskEmail(email), decision });
-      return c.json({ error: "Too many requests — please wait before trying again" }, 429);
+      return c.json(browserError("send_rate_limited"), 429);
     }
 
     const csrfToken = dependencies.createCsrfToken();
@@ -130,7 +131,7 @@ export const createSendCodeApp = (dependencies: SendCodeDependencies): Hono => {
       );
     } catch (err) {
       log({ domain: "auth", action: "send_code_error", error: err instanceof Error ? err.message : String(err) });
-      return c.json({ error: "Failed to send code — please try again" }, 500);
+      return c.json(browserError("send_code_failed"), 500);
     }
 
     log({ domain: "auth", action: "send_code", maskedEmail: maskEmail(email) });

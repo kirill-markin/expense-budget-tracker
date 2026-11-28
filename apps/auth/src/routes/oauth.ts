@@ -1,10 +1,18 @@
 import { Hono, type Context } from "hono";
+import { getCookie } from "hono/cookie";
 import {
   getRawQueryByteLength,
   MAX_OAUTH_AUTHORIZE_QUERY_BYTES,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
+import {
+  LOCALE_REGISTRY,
+  matchAcceptLanguage,
+  parseSupportedLocale,
+  type SupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
 import { PROXY_JWT_UNAUTHORIZED_MESSAGE } from "@expense-budget-tracker/agent-shared/proxy-jwt";
+import { getConsentTranslations } from "../i18n/consent.js";
 import {
   getOAuthConfig,
   isOAuthProtocolError,
@@ -31,6 +39,7 @@ import {
   type OAuthAuthorizationServerErrorEvent,
   type OAuthEndpointServerErrorEvent,
 } from "../server/logger.js";
+import { escapeHtml } from "../templates/escapeHtml.js";
 
 type OAuthServerErrorEvent = OAuthAuthorizationServerErrorEvent | OAuthEndpointServerErrorEvent;
 
@@ -135,13 +144,6 @@ const readBoundedRequestBody = async (request: Request, maxBytes: number): Promi
   }
 };
 
-const escapeHtml = (value: string): string => value
-  .replace(/&/gu, "&amp;")
-  .replace(/</gu, "&lt;")
-  .replace(/>/gu, "&gt;")
-  .replace(/"/gu, "&quot;")
-  .replace(/'/gu, "&#39;");
-
 const CONSENT_DECISIONS = ["deny", "allow"] as const;
 type ConsentDecision = typeof CONSENT_DECISIONS[number];
 type ConsentFormField = Readonly<[string, string]>;
@@ -179,19 +181,52 @@ const getCallbackDestination = (redirectUri: string): string => {
   return callbackUrl.protocol;
 };
 
-const renderConsent = (client: OAuthClient, request: AuthorizationRequest): string => {
+const renderConsent = (client: OAuthClient, request: AuthorizationRequest, locale: SupportedLocale): string => {
+  const { locale: renderedLocale, copy } = getConsentTranslations(locale);
+  const { tag: lang, direction: dir } = LOCALE_REGISTRY[renderedLocale];
   const hidden = consentHiddenFields(request)
     .map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`)
     .join("");
-  const permissions = request.scopes.map((scope) => `<li>${scope === "expenses:read" ? "<strong>Read access:</strong> View all financial data in the workspaces you can access." : "<strong>Write access:</strong> Create, change, and delete financial data."}</li>`).join("");
+  const permissions = request.scopes.map((scope) => {
+    const [label, details] = scope === "expenses:read"
+      ? [copy.readLabel, copy.readDetails]
+      : [copy.writeLabel, copy.writeDetails];
+    return `<li><strong>${escapeHtml(label)}</strong> ${escapeHtml(details)}</li>`;
+  }).join("");
   const callbackDestination = getCallbackDestination(request.redirectUri);
   const isolatedClientName = `<bdi dir="auto">${escapeHtml(client.clientName)}</bdi>`;
+  const heading = escapeHtml(copy.heading).replaceAll("{clientName}", () => isolatedClientName);
+  const warning = escapeHtml(copy.warning).replaceAll("{clientName}", () => `<strong>${isolatedClientName}</strong>`);
   const actions = CONSENT_DECISIONS
-    .map((decision) => `<button name="decision" value="${decision}" type="submit">${decision === "allow" ? "Allow" : "Deny"}</button>`)
+    .map((decision) => `<button name="decision" value="${decision}" type="submit">${escapeHtml(copy[decision])}</button>`)
     .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Connect an app | Expense Budget Tracker</title><style>
+  return `<!doctype html>
+<html lang="${lang}" dir="${dir}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>${escapeHtml(copy.title)}</title>
+<style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111;background:#fff}.card{width:100%;max-width:600px;border:1px solid #232323;padding:28px}h1{font-size:24px;line-height:1.25;margin:0 0 20px;overflow-wrap:anywhere}h2{font-size:16px;margin:24px 0 10px}p,li,dt,dd,summary{font-size:14px;line-height:1.5}.warning{padding:12px;border:1px solid #8a5a00;background:#fff8e6}.destination{padding:14px;border:2px solid #232323}.destination h2{margin:0 0 8px}.callback{font-size:18px;font-weight:700;margin:0;overflow-wrap:anywhere}.destination-note{color:#555;margin:8px 0 0}.permissions{padding-inline-start:22px}.permissions li+li{margin-top:8px}.technical{margin-top:24px}.technical summary{cursor:pointer;font-weight:700}.details{display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;margin-top:10px}.details dt{font-weight:700}.details dd{margin:0;overflow-wrap:anywhere}.actions{display:flex;gap:10px;margin-top:24px}button{flex:1;padding:10px;border:1px solid #232323;background:#fff;color:#111;font:inherit;cursor:pointer}button[value=allow]{background:#232323;color:#fff}@media(max-width:540px){body{padding:0}.card{border:0;min-height:100vh;padding:24px 16px}.details{grid-template-columns:1fr}}
-</style></head><body><main class="card"><h1>Connect ${isolatedClientName} to Expense Budget Tracker?</h1><p class="warning"><strong>Before you continue:</strong> The connecting app supplied the displayed name <strong>${isolatedClientName}</strong>. Expense Budget Tracker has not verified who operates it. Continue only if you started this connection and recognize the destination below.</p><section class="destination" aria-labelledby="callback-heading"><h2 id="callback-heading">After approval, you'll return to</h2><p class="callback">${escapeHtml(callbackDestination)}</p><p class="destination-note">This destination is shown to help you recognize the connection. It does not verify who operates the app.</p></section><h2>Access in Expense Budget Tracker</h2><p>This app is asking for the following access:</p><ul class="permissions">${permissions}</ul><details class="technical"><summary>Technical details</summary><dl class="details"><dt>Client ID</dt><dd>${escapeHtml(client.clientId)}</dd><dt>Exact redirect URI</dt><dd>${escapeHtml(request.redirectUri)}</dd><dt>Requested resource</dt><dd>${escapeHtml(request.resource)}</dd></dl></details><form method="post" action="/oauth/authorize">${hidden}<div class="actions">${actions}</div></form></main></body></html>`;
+</style>
+</head>
+<body><main class="card">
+<h1>${heading}</h1>
+<p class="warning"><strong>${escapeHtml(copy.warningLabel)}</strong> ${warning}</p>
+<section class="destination" aria-labelledby="callback-heading">
+<h2 id="callback-heading">${escapeHtml(copy.callbackHeading)}</h2>
+<p class="callback">${escapeHtml(callbackDestination)}</p>
+<p class="destination-note">${escapeHtml(copy.destinationNote)}</p>
+</section>
+<h2>${escapeHtml(copy.permissionsHeading)}</h2>
+<p>${escapeHtml(copy.permissionsIntro)}</p>
+<ul class="permissions">${permissions}</ul>
+<details class="technical"><summary>${escapeHtml(copy.technicalDetails)}</summary><dl class="details">
+<dt>${escapeHtml(copy.clientId)}</dt><dd>${escapeHtml(client.clientId)}</dd>
+<dt>${escapeHtml(copy.redirectUri)}</dt><dd>${escapeHtml(request.redirectUri)}</dd>
+<dt>${escapeHtml(copy.resource)}</dt><dd>${escapeHtml(request.resource)}</dd>
+</dl></details>
+<form method="post" action="/oauth/authorize">${hidden}<div class="actions">${actions}</div></form>
+</main></body></html>`;
 };
 
 const readSingleParameter = (params: URLSearchParams, name: string): string | undefined => {
@@ -446,7 +481,9 @@ app.get("/oauth/authorize", async (c) => {
     c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin");
-    return c.html(renderConsent(client, request));
+    const locale = parseSupportedLocale(getCookie(c, "locale"))
+      ?? matchAcceptLanguage(c.req.header("accept-language"));
+    return c.html(renderConsent(client, request, locale));
   } catch (error) {
     if (isOAuthProtocolError(error)) {
       return authorizationRequest === null

@@ -1,7 +1,4 @@
-/**
- * Login page translations for all supported locales.
- * Plain object lookup — no i18next library needed for the auth service.
- */
+import { type SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 
 type LoginTranslations = Readonly<{
   title: string;
@@ -14,7 +11,7 @@ type LoginTranslations = Readonly<{
   checkEmail: string;
 }>;
 
-const translations: Readonly<Record<string, LoginTranslations>> = {
+const translations: Readonly<Record<SupportedLocale, LoginTranslations>> = {
   en: {
     title: "Sign in",
     email: "Email",
@@ -97,9 +94,4 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
   },
 };
 
-export const t = (locale: string, key: keyof LoginTranslations): string => {
-  const strings = translations[locale] ?? translations.en;
-  return strings[key];
-};
-
-export type { LoginTranslations };
+export const t = (locale: SupportedLocale, key: keyof LoginTranslations): string => translations[locale][key];

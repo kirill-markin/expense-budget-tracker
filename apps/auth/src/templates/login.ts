@@ -12,15 +12,12 @@ import {
   type SupportedLocale,
 } from "@expense-budget-tracker/agent-shared/locales";
 
+import { getLoginFeedback } from "../i18n/browserErrors.js";
 import { t } from "../i18n/translations.js";
+import { escapeHtml } from "./escapeHtml.js";
 
-const escapeHtml = (str: string): string =>
-  str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+const serializeScriptValue = (value: string | Readonly<Record<string, string>>): string =>
+  JSON.stringify(value).replace(/</gu, "\\u003c");
 
 const firstLoginLocales: ReadonlyArray<SupportedLocale> = ["en", "es", "zh"];
 const loginLocales: ReadonlyArray<SupportedLocale> = [
@@ -237,18 +234,19 @@ export const renderLoginPage = (
 
   <script>
     (function() {
-      var redirectUri = ${JSON.stringify(redirectUri)};
-      var timezoneCookieDomain = ${JSON.stringify(cookieDomain)};
+      var redirectUri = ${serializeScriptValue(redirectUri)};
+      var timezoneCookieDomain = ${serializeScriptValue(cookieDomain)};
 
       document.getElementById("lang-select").addEventListener("change", function() {
         window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + this.value;
       });
 
       var csrfToken = "";
-      var sendingLabel = ${JSON.stringify(t(locale, "sending"))};
-      var sendCodeLabel = ${JSON.stringify(t(locale, "sendCode"))};
-      var verifyingLabel = ${JSON.stringify(t(locale, "verifying"))};
-      var verifyLabel = ${JSON.stringify(t(locale, "verify"))};
+      var sendingLabel = ${serializeScriptValue(t(locale, "sending"))};
+      var sendCodeLabel = ${serializeScriptValue(t(locale, "sendCode"))};
+      var verifyingLabel = ${serializeScriptValue(t(locale, "verifying"))};
+      var verifyLabel = ${serializeScriptValue(t(locale, "verify"))};
+      var feedback = ${serializeScriptValue(getLoginFeedback(locale))};
 
       var emailInput = document.getElementById("login-email");
       var otpInput = document.getElementById("login-otp");
@@ -262,6 +260,17 @@ export const renderLoginPage = (
       function showError(el, msg) {
         el.textContent = msg;
         el.classList.remove("hidden");
+      }
+
+      function showRequestError(el, data, status) {
+        var code = data && data.errorCode;
+        if (typeof code === "string" && Object.hasOwn(feedback, code)) {
+          showError(el, feedback[code]);
+          return;
+        }
+
+        var serverMessage = data && typeof data.error === "string" ? data.error : "";
+        showError(el, serverMessage || feedback.httpError.replace("{status}", String(status)));
       }
 
       function hideError(el) {
@@ -298,7 +307,7 @@ export const renderLoginPage = (
           .then(function(res) {
             return res.json().then(function(data) {
               if (!res.ok) {
-                showError(emailError, data.error || "Error: " + res.status);
+                showRequestError(emailError, data, res.status);
                 return;
               }
               csrfToken = data.csrfToken || "";
@@ -307,8 +316,8 @@ export const renderLoginPage = (
               otpInput.focus();
             });
           })
-          .catch(function(err) {
-            showError(emailError, err.message || String(err));
+          .catch(function() {
+            showError(emailError, feedback.send_code_failed);
           })
           .finally(function() {
             sendBtn.disabled = false;
@@ -336,7 +345,7 @@ export const renderLoginPage = (
           .then(function(res) {
             return res.json().then(function(data) {
               if (!res.ok) {
-                showError(otpError, data.error || "Error: " + res.status);
+                showRequestError(otpError, data, res.status);
                 return;
               }
               var browserTimezone = "";
@@ -362,8 +371,8 @@ export const renderLoginPage = (
               window.location.href = redirectUri;
             });
           })
-          .catch(function(err) {
-            showError(otpError, err.message || String(err));
+          .catch(function() {
+            showError(otpError, feedback.verify_code_failed);
           })
           .finally(function() {
             verifyBtn.disabled = false;

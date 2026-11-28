@@ -81,5 +81,7 @@ test("login shares locale selection while keeping existing cookie and picker val
   });
   assert.equal(response.status, 200);
   assert.match(response.headers.getSetCookie().join("\n"), /locale=he;/u);
-  assert.match(await response.text(), /<html lang="he" dir="rtl">/u);
+  const html = await response.text();
+  assert.match(html, /<html lang="he" dir="rtl">/u);
+  assert.match(html, /"internal_server_error":"[^"]+/u);
 });

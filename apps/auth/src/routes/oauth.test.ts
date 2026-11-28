@@ -391,7 +391,7 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
   }));
   const query = authorizationParams();
   const consentPage = await app.request(`${issuer}/oauth/authorize?${query.toString()}`, {
-    headers: { Cookie: "session=valid-session" },
+    headers: { Cookie: "session=valid-session; locale=ar", "Accept-Language": "he-IL" },
   });
   assert.equal(consentPage.status, 200);
   assert.equal(consentPage.headers.get("cache-control"), "no-store");
@@ -402,13 +402,14 @@ test("consent is no-store, anti-clickjacking, and same-origin protected", async 
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
   );
   const consentHtml = await consentPage.text();
+  assert.match(consentHtml, /<html lang="en" dir="ltr">/u);
   assert.match(consentHtml, /<h1>Connect <bdi dir="auto">Desktop &lt;MCP&gt;<\/bdi> to Expense Budget Tracker\?<\/h1>/u);
   assert.match(consentHtml, /Desktop &lt;MCP&gt;/u);
   assert.equal(consentHtml.includes("Desktop <MCP>"), false);
   assert.match(consentHtml, /connecting app supplied the displayed name/u);
   assert.match(consentHtml, /Expense Budget Tracker has not verified who operates it/u);
   assert.match(consentHtml, /Continue only if you started this connection and recognize the destination below/u);
-  assert.match(consentHtml, /After approval, you'll return to/u);
+  assert.match(consentHtml, /After approval, you&#39;ll return to/u);
   assert.match(consentHtml, /<p class="callback">https:\/\/client\.example<\/p>/u);
   assert.match(consentHtml, /does not verify who operates the app/u);
   assert.match(consentHtml, /<strong>Read access:<\/strong> View all financial data in the workspaces you can access\./u);
