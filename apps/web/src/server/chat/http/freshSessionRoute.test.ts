@@ -73,8 +73,8 @@ const createReservation = (): ChatRunStartReservation => ({
 const createDependencies = (
   overrides: Partial<Parameters<typeof postFreshChatSessionRouteWithDeps>[1]>,
 ): Parameters<typeof postFreshChatSessionRouteWithDeps>[1] => ({
-  getLocaleFromRequest: overrides.getLocaleFromRequest
-    ?? (() => "en" as SupportedLocale),
+  getRequestUserLocale: overrides.getRequestUserLocale
+    ?? (async () => "en" as SupportedLocale),
   reserveChatRunStart: overrides.reserveChatRunStart
     ?? (() => ({
       kind: "reserved",

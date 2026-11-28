@@ -5,6 +5,7 @@ import {
   DATE_FORMATS,
   NUMBER_FORMATS,
   SUPPORTED_LOCALES,
+  parseSupportedLocale,
   type AutoFilterDelayMinutes,
   type DateFormat,
   type NumberFormat,
@@ -46,11 +47,14 @@ type ParsedCreateWorkspaceBody = Readonly<{
   timezone: string;
 }>;
 
-const localeSchema = z.unknown().superRefine((value, ctx) => {
-  if (typeof value !== "string" || !(SUPPORTED_LOCALES as ReadonlyArray<string>).includes(value)) {
+const localeSchema = z.unknown().transform((value, ctx): SupportedLocale => {
+  const locale = typeof value === "string" ? parseSupportedLocale(value) : null;
+  if (locale === null) {
     ctx.addIssue({ code: "custom", message: `Invalid locale. Expected one of: ${SUPPORTED_LOCALES.join(", ")}` });
+    return z.NEVER;
   }
-}).transform((value): SupportedLocale => value as SupportedLocale);
+  return locale;
+});
 
 const numberFormatSchema = z.unknown().superRefine((value, ctx) => {
   if (typeof value !== "string" || !(NUMBER_FORMATS as ReadonlyArray<string>).includes(value)) {

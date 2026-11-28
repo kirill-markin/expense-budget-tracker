@@ -114,7 +114,9 @@ export const WorkspaceSettings = (props: Props): ReactElement => {
             {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {error !== null && <div className={styles.error}>{error}</div>}
+        {error !== null && (
+          <div className={styles.error} role="alert"><strong>{t("common.saveFailed")}</strong> {error}</div>
+        )}
         {saved && <div className={styles.saved}>{t("common.saved")}</div>}
       </div>
     </div>

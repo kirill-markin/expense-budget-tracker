@@ -28,6 +28,8 @@ import {
   PROXY_JWT_UNAUTHORIZED_MESSAGE,
   type ProxyJwtAuthenticator,
 } from "@expense-budget-tracker/agent-shared/proxy-jwt";
+import { CARRY_LOCALE_QUERY_PARAM, LOCALE_REGISTRY } from "@expense-budget-tracker/agent-shared/locales";
+import { parseLocaleHint, readAppLocaleCookie } from "@/lib/localeCookie";
 import { getJwtVerifier, refreshTokens } from "@/server/cognitoAuth";
 import { log } from "@/server/logger";
 import { clearAuthCookies } from "@/server/cookies";
@@ -81,6 +83,13 @@ const buildAuthRedirectUrl = (request: NextRequest): URL => {
   const returnPath = request.nextUrl.pathname + request.nextUrl.search;
   const redirectUri = returnPath !== "/" ? `${corsOrigin}${returnPath}` : corsOrigin;
   loginUrl.searchParams.set("redirect_uri", redirectUri);
+
+  const locale = parseLocaleHint(request.nextUrl.searchParams) ?? readAppLocaleCookie(request.headers);
+  if (locale === null) {
+    loginUrl.searchParams.set(CARRY_LOCALE_QUERY_PARAM, "1");
+  } else {
+    loginUrl.searchParams.set("lang", LOCALE_REGISTRY[locale].tag);
+  }
   return loginUrl;
 };
 
@@ -351,7 +360,7 @@ const handleProxyJwtRequest = async (
   }
 
   if (request.nextUrl.pathname === WORKSPACE_BOOTSTRAP_PATH) {
-    return forwardWithIdentity(request, identity, null, nonce);
+    return forwardWithIdentity(request, identity, resolveWorkspaceId(request), nonce);
   }
 
   const workspaceId = resolveWorkspaceId(request);
@@ -432,7 +441,7 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
       }
 
       if (pathname === WORKSPACE_BOOTSTRAP_PATH) {
-        const response = forwardWithIdentity(request, refreshedIdentity, null, nonce);
+        const response = forwardWithIdentity(request, refreshedIdentity, resolveWorkspaceId(request), nonce);
         response.headers.append("Set-Cookie", buildCookieHeader("session", tokens.idToken, 3024000));
         if (tokens.refreshToken !== undefined) {
           response.headers.append("Set-Cookie", buildCookieHeader("refresh", tokens.refreshToken, 3024000));
@@ -467,7 +476,7 @@ export const proxy = async (request: NextRequest): Promise<NextResponse> => {
   }
 
   if (pathname === WORKSPACE_BOOTSTRAP_PATH) {
-    return forwardWithIdentity(request, identity, null, nonce);
+    return forwardWithIdentity(request, identity, resolveWorkspaceId(request), nonce);
   }
 
   const workspaceId = resolveWorkspaceId(request);

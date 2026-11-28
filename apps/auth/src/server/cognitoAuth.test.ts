@@ -7,6 +7,7 @@ import {
   type AdminSetUserPasswordCommandInput,
 } from "@aws-sdk/client-cognito-identity-provider";
 import {
+  initiateBrowserEmailOtp,
   initiateEmailOtpWithDependencies,
   isDefinitiveCognitoRefreshRejection,
   refreshCognitoSessionWithDependencies,
@@ -221,6 +222,7 @@ test("email OTP creates a missing user as confirmed and verified, then initiates
 
     const result = await initiateEmailOtpWithDependencies(
       "new@example.com",
+      null,
       createInitiateEmailOtpDependencies(calls, null, null),
     );
 
@@ -254,6 +256,7 @@ test("email OTP proceeds when a concurrent request already created the user", as
 
     const result = await initiateEmailOtpWithDependencies(
       "race@example.com",
+      null,
       createInitiateEmailOtpDependencies(calls, exists, null),
     );
 
@@ -273,7 +276,7 @@ test("email OTP raises any other user creation failure without initiating sign-i
     });
 
     await assert.rejects(
-      initiateEmailOtpWithDependencies("bad@example.com", createInitiateEmailOtpDependencies(calls, invalid, null)),
+      initiateEmailOtpWithDependencies("bad@example.com", null, createInitiateEmailOtpDependencies(calls, invalid, null)),
       (error: unknown) => error instanceof Error
         && error.cause === invalid
         && error.message === "Cognito AdminCreateUser failed for b***@example.com: InvalidParameterException: Invalid email address format.",
@@ -292,7 +295,7 @@ test("email OTP raises when the created user cannot get a permanent password", a
     });
 
     await assert.rejects(
-      initiateEmailOtpWithDependencies("new@example.com", createInitiateEmailOtpDependencies(calls, null, failure)),
+      initiateEmailOtpWithDependencies("new@example.com", null, createInitiateEmailOtpDependencies(calls, null, failure)),
       (error: unknown) => error instanceof Error
         && error.cause === failure
         && error.message.startsWith("Cognito AdminSetUserPassword failed for n***@example.com after AdminCreateUser"),
@@ -300,4 +303,92 @@ test("email OTP raises when the created user cannot get a permanent password", a
     assert.deepEqual(calls.targets, ["InitiateAuth"]);
     assert.equal(calls.creates.length, 1);
   });
+});
+
+test("localized OTP retries for a missing user and returns the session from EMAIL_OTP selection", async (): Promise<void> => {
+  await withCognitoUserPool(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+    const requests: Array<Readonly<{ target: string; body: Record<string, unknown> }>> = [];
+    const dependencies = createInitiateEmailOtpDependencies(calls, null, null);
+    const result = await initiateEmailOtpWithDependencies("new@example.com", "es", {
+      ...dependencies,
+      request: async (target, body) => {
+        requests.push({ target, body });
+        if (requests.length === 1) throw cognitoError("UserNotFoundException", 400);
+        if (target === "InitiateAuth") {
+          return { Session: "choice-session", AvailableChallenges: ["PASSWORD", "EMAIL_OTP"] };
+        }
+        return { ChallengeName: "EMAIL_OTP", Session: "otp-session" };
+      },
+    });
+
+    const initiateRequest = {
+      target: "InitiateAuth",
+      body: {
+        AuthFlow: "USER_AUTH",
+        ClientId: "test-client-id",
+        AuthParameters: { USERNAME: "new@example.com" },
+      },
+    };
+
+    assert.deepEqual(requests, [
+      initiateRequest,
+      initiateRequest,
+      {
+        target: "RespondToAuthChallenge",
+        body: {
+          ClientId: "test-client-id",
+          ChallengeName: "SELECT_CHALLENGE",
+          Session: "choice-session",
+          ChallengeResponses: { USERNAME: "new@example.com", ANSWER: "EMAIL_OTP" },
+          ClientMetadata: { locale: "es" },
+        },
+      },
+    ]);
+    assert.deepEqual(result, { session: "otp-session" });
+    assert.equal(calls.creates.length, 1);
+    assert.equal(calls.passwords.length, 1);
+  });
+});
+
+test("localized OTP rejects a response that has a session for a different challenge", async (): Promise<void> => {
+  await withCognitoClientId(async () => {
+    const calls: InitiateEmailOtpCalls = { targets: [], creates: [], passwords: [] };
+    await assert.rejects(
+      initiateEmailOtpWithDependencies("existing@example.com", "es", {
+        ...createInitiateEmailOtpDependencies(calls, null, null),
+        request: async (target) => target === "InitiateAuth"
+          ? { Session: "choice-session", AvailableChallenges: ["PASSWORD", "EMAIL_OTP"] }
+          : { ChallengeName: "PASSWORD", Session: "password-session" },
+      }),
+      /Cognito RespondToAuthChallenge did not return the EMAIL_OTP challenge/u,
+    );
+    assert.deepEqual(calls.creates, []);
+  });
+});
+
+test("browser OTP with English copy uses the direct challenge without metadata", async (t): Promise<void> => {
+  const previousRegion = process.env.COGNITO_REGION;
+  process.env.COGNITO_REGION = "eu-west-1";
+  t.after(() => {
+    if (previousRegion === undefined) delete process.env.COGNITO_REGION;
+    else process.env.COGNITO_REGION = previousRegion;
+  });
+
+  const requests = t.mock.method(globalThis, "fetch", async (_input: Parameters<typeof fetch>[0], options?: RequestInit) => {
+    assert.equal(new Headers(options?.headers).get("X-Amz-Target"), "AWSCognitoIdentityProviderService.InitiateAuth");
+    const body = options?.body;
+    assert(typeof body === "string");
+    assert.deepEqual(JSON.parse(body), {
+      AuthFlow: "USER_AUTH",
+      ClientId: "test-client-id",
+      AuthParameters: { USERNAME: "existing@example.com", PREFERRED_CHALLENGE: "EMAIL_OTP" },
+    });
+    return Response.json({ ChallengeName: "EMAIL_OTP", Session: "otp-session" });
+  });
+
+  await withCognitoClientId(async () => {
+    assert.deepEqual(await initiateBrowserEmailOtp("existing@example.com", "en"), { session: "otp-session" });
+  });
+  assert.equal(requests.mock.callCount(), 1);
 });

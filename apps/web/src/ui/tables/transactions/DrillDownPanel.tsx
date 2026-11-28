@@ -7,9 +7,11 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import { getCellVisibility } from "@/lib/dataMask";
 import { fetchLiveData } from "@/lib/liveDataFetch";
+import { transactionKindLabel } from "@/i18n/transactionKindLabel";
 import type { FieldHints, LedgerEntry, TransactionsPage } from "@/server/transactions/getTransactions";
 import { useFormat } from "@/ui/FormatProvider";
 import { useFilteredMode } from "@/ui/FilteredModeProvider";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import alertStyles from "@/ui/Alert.module.css";
 
 import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
@@ -57,17 +59,20 @@ const DRILLDOWN_SORT_DEFAULTS: Readonly<Record<string, "asc" | "desc">> = {
   amountReportAbs: "desc",
 };
 
-const buildTitle = (filter: DrillDownFilter): string => {
+const buildTitle = (
+  filter: DrillDownFilter,
+  t: (key: string, options?: Record<string, string>) => string,
+  categoryLabel: (category: string) => string,
+): string => {
   if (filter.category !== null) {
-    const category = filter.category === "" ? "Uncategorized" : filter.category;
+    const category = filter.category === "" ? t("txn.filterUncategorized") : categoryLabel(filter.category);
     if (filter.direction === null) return category;
-    const direction = filter.direction.charAt(0).toUpperCase() + filter.direction.slice(1);
-    return `${direction} \u2014 ${category}`;
+    return t("txn.drillDownTitle", { direction: transactionKindLabel(filter.direction, t), category });
   }
-  if (filter.direction === null) return "All categories";
-  const direction = filter.direction.charAt(0).toUpperCase() + filter.direction.slice(1);
+  if (filter.direction === null) return t("txn.allCategories");
+  const direction = transactionKindLabel(filter.direction, t);
   if (filter.categories !== null) return direction;
-  return `${direction} \u2014 All categories`;
+  return t("txn.drillDownTitle", { direction, category: t("txn.allCategories") });
 };
 
 const buildSubtitle = (filter: DrillDownFilter): string => {
@@ -78,12 +83,13 @@ export const DrillDownPanel = (props: Props): ReactElement => {
   const { filter, categories, hints, reportingCurrency, refreshToken, onClose } = props;
   const { numberFormat } = useFormat();
   const { t } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const { effectiveAllowlist } = useFilteredMode();
   const { feedback: copyFeedback, copyTransaction } = useTransactionClipboard(
     t("txn.copySuccess"),
     t("txn.copyFailed"),
   );
-  const title = filter.businessPersonalTransfers ? t("budget.businessPersonalTransfer") : buildTitle(filter);
+  const title = filter.businessPersonalTransfers ? t("budget.businessPersonalTransfer") : buildTitle(filter, t, categoryLabel);
   const getMaskClass = useCallback(
     (row: LedgerEntry): string => getCellVisibility(effectiveAllowlist, row.category).maskClass,
     [effectiveAllowlist],
@@ -266,7 +272,7 @@ export const DrillDownPanel = (props: Props): ReactElement => {
 
         {!loading && (
           <div className={panelStyles.panelCount}>
-            {total} {total === 1 ? "entry" : "entries"}
+            {t("txn.drillDownCount", { count: total })}
           </div>
         )}
 

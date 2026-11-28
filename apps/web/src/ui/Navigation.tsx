@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 
 import { NAV_LINKS } from "@/lib/navigation";
+import { DemoLocaleLink } from "@/ui/DemoLocaleLink";
 import { useChatViewport } from "./chat/shell/layout/chatViewport";
 
 const PHONE_NAV_LINKS = [
@@ -74,9 +74,9 @@ export const Navigation = (): ReactElement => {
         {(isPhone ? PHONE_NAV_LINKS : NAV_LINKS).map((link) => {
           const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
           return (
-            <Link key={link.href} href={link.href} aria-current={active ? "page" : undefined}>
+            <DemoLocaleLink key={link.href} href={link.href} aria-current={active ? "page" : undefined}>
               {t(link.labelKey)}
-            </Link>
+            </DemoLocaleLink>
           );
         })}
       </nav>

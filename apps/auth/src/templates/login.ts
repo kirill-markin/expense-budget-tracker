@@ -5,41 +5,38 @@
  * JS implements the same two-step OTP flow as the old LoginForm.tsx.
  * On successful verification, auth service sets session cookies (Domain=COOKIE_DOMAIN)
  * and client JS redirects to redirect_uri.
- * RTL: dir="rtl" when locale is fa, ar, or he; CSS logical properties throughout.
  */
+import {
+  AUTH_LOCALE_COOKIE,
+  COMPACT_LOCALE_PICKER_LIMIT,
+  createLocalePickerOptions,
+  LOCALE_REGISTRY,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
+
+import { getLoginFeedback } from "../i18n/browserErrors.js";
 import { t } from "../i18n/translations.js";
+import { escapeHtml } from "./escapeHtml.js";
 
-const RTL_LOCALES = new Set(["fa", "ar", "he"]);
+const serializeScriptValue = (value: string | Readonly<Record<string, string>>): string =>
+  JSON.stringify(value).replace(/</gu, "\\u003c");
 
-const escapeHtml = (str: string): string =>
-  str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const LOCALE_LABELS: Readonly<Record<string, string>> = {
-  en: "English",
-  ru: "Русский",
-  es: "Español",
-  uk: "Українська",
-  fa: "فارسی",
-  zh: "中文",
-  ar: "العربية",
-  he: "עברית",
-};
-
-const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
+const firstLoginLocales: ReadonlyArray<SupportedLocale> = ["en", "es", "zh"];
+const loginLocales: ReadonlyArray<SupportedLocale> = [
+  ...firstLoginLocales,
+  ...SUPPORTED_LOCALES.filter((locale) => !firstLoginLocales.includes(locale)),
+];
+const loginLocaleOptions = createLocalePickerOptions(loginLocales, LOCALE_REGISTRY);
+const hasLocaleSearch = loginLocaleOptions.length > COMPACT_LOCALE_PICKER_LIMIT;
 
 export const renderLoginPage = (
-  locale: string,
+  locale: SupportedLocale,
   redirectUri: string,
   websiteUrl: string,
   cookieDomain: string,
 ): string => {
-  const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
-  const lang = locale;
+  const { tag: lang, direction: dir } = LOCALE_REGISTRY[locale];
 
   return `<!DOCTYPE html>
 <html lang="${lang}" dir="${dir}">
@@ -174,6 +171,36 @@ export const renderLoginPage = (
       cursor: pointer;
     }
 
+    .login-lang select:focus-visible,
+    .login-lang-search input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .login-lang--searchable {
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .login-lang--searchable select {
+      max-inline-size: 100%;
+    }
+
+    .login-lang-search {
+      inline-size: 100%;
+    }
+
+    .login-lang-search .login-input {
+      margin-bottom: 0;
+    }
+
+    .login-lang-search .login-label,
+    .login-lang-search-status {
+      color: var(--text);
+      font-size: 13px;
+    }
+
     .hidden { display: none; }
 
     .login-header {
@@ -216,9 +243,19 @@ export const renderLoginPage = (
       <a href="${escapeHtml(websiteUrl)}">Expense Budget Tracker</a>
     </header>
     <div class="login-card">
-      <div class="login-lang">
-        <select id="lang-select">
-          ${SUPPORTED_LOCALES.map((l) => `<option value="${l}"${l === locale ? " selected" : ""}>${escapeHtml(LOCALE_LABELS[l])}</option>`).join("\n          ")}
+      <div class="login-lang${hasLocaleSearch ? " login-lang--searchable" : ""}">
+        ${hasLocaleSearch ? `<div class="login-lang-search">
+          <label class="login-label" for="lang-search">${escapeHtml(t(locale, "languageSearch"))}</label>
+          <input class="login-input" id="lang-search" type="search" autocomplete="off" dir="auto" aria-controls="lang-select">
+          <div id="lang-search-status" class="login-lang-search-status" role="status"></div>
+        </div>` : ""}
+        <select id="lang-select" aria-label="${escapeHtml(t(locale, "language"))}">
+          ${loginLocaleOptions.map(({ id, tag, direction, label, searchText }) => {
+            const searchAttributes = hasLocaleSearch
+              ? ` lang="${escapeHtml(tag)}" dir="${direction}" data-locale-search="${escapeHtml(searchText)}"`
+              : "";
+            return `<option value="${escapeHtml(id)}"${id === locale ? " selected" : ""}${searchAttributes}>${escapeHtml(label)}</option>`;
+          }).join("\n          ")}
         </select>
       </div>
       <h1 class="login-title">${escapeHtml(t(locale, "title"))}</h1>
@@ -242,18 +279,20 @@ export const renderLoginPage = (
 
   <script>
     (function() {
-      var redirectUri = ${JSON.stringify(redirectUri)};
-      var timezoneCookieDomain = ${JSON.stringify(cookieDomain)};
+      var redirectUri = ${serializeScriptValue(redirectUri)};
+      var timezoneCookieDomain = ${serializeScriptValue(cookieDomain)};
 
       document.getElementById("lang-select").addEventListener("change", function() {
-        window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + this.value;
+        document.cookie = "${AUTH_LOCALE_COOKIE}=" + encodeURIComponent(this.value) + "; Path=/; Max-Age=31536000; Secure; SameSite=Lax";
+        window.location.href = "/login?redirect_uri=" + encodeURIComponent(redirectUri) + "&lang=" + encodeURIComponent(this.value);
       });
 
       var csrfToken = "";
-      var sendingLabel = ${JSON.stringify(t(locale, "sending"))};
-      var sendCodeLabel = ${JSON.stringify(t(locale, "sendCode"))};
-      var verifyingLabel = ${JSON.stringify(t(locale, "verifying"))};
-      var verifyLabel = ${JSON.stringify(t(locale, "verify"))};
+      var sendingLabel = ${serializeScriptValue(t(locale, "sending"))};
+      var sendCodeLabel = ${serializeScriptValue(t(locale, "sendCode"))};
+      var verifyingLabel = ${serializeScriptValue(t(locale, "verifying"))};
+      var verifyLabel = ${serializeScriptValue(t(locale, "verify"))};
+      var feedback = ${serializeScriptValue(getLoginFeedback(locale))};
 
       var emailInput = document.getElementById("login-email");
       var otpInput = document.getElementById("login-otp");
@@ -267,6 +306,17 @@ export const renderLoginPage = (
       function showError(el, msg) {
         el.textContent = msg;
         el.classList.remove("hidden");
+      }
+
+      function showRequestError(el, data, status) {
+        var code = data && data.errorCode;
+        if (typeof code === "string" && Object.hasOwn(feedback, code)) {
+          showError(el, feedback[code]);
+          return;
+        }
+
+        var serverMessage = data && typeof data.error === "string" ? data.error : "";
+        showError(el, serverMessage || feedback.httpError.replace("{status}", String(status)));
       }
 
       function hideError(el) {
@@ -298,12 +348,12 @@ export const renderLoginPage = (
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ email: email }),
+          body: JSON.stringify({ email: email, locale: ${serializeScriptValue(locale)} }),
         })
           .then(function(res) {
             return res.json().then(function(data) {
               if (!res.ok) {
-                showError(emailError, data.error || "Error: " + res.status);
+                showRequestError(emailError, data, res.status);
                 return;
               }
               csrfToken = data.csrfToken || "";
@@ -312,8 +362,8 @@ export const renderLoginPage = (
               otpInput.focus();
             });
           })
-          .catch(function(err) {
-            showError(emailError, err.message || String(err));
+          .catch(function() {
+            showError(emailError, feedback.send_code_failed);
           })
           .finally(function() {
             sendBtn.disabled = false;
@@ -341,7 +391,7 @@ export const renderLoginPage = (
           .then(function(res) {
             return res.json().then(function(data) {
               if (!res.ok) {
-                showError(otpError, data.error || "Error: " + res.status);
+                showRequestError(otpError, data, res.status);
                 return;
               }
               var browserTimezone = "";
@@ -367,8 +417,8 @@ export const renderLoginPage = (
               window.location.href = redirectUri;
             });
           })
-          .catch(function(err) {
-            showError(otpError, err.message || String(err));
+          .catch(function() {
+            showError(otpError, feedback.verify_code_failed);
           })
           .finally(function() {
             verifyBtn.disabled = false;
@@ -377,6 +427,30 @@ export const renderLoginPage = (
       });
     })();
   </script>
+  ${hasLocaleSearch ? `<script>
+    (function() {
+      var select = document.getElementById("lang-select");
+      var search = document.getElementById("lang-search");
+      var status = document.getElementById("lang-search-status");
+      var options = Array.from(select.options);
+      var noMatchesLabel = ${serializeScriptValue(t(locale, "noLanguageMatches"))};
+
+      search.addEventListener("input", function() {
+        var query = search.value.trim().normalize("NFKC").toLowerCase();
+        var selected = select.value;
+        var hasMatches = false;
+        var visibleOptions = options.filter(function(option) {
+          var matches = option.dataset.localeSearch.includes(query);
+          hasMatches = hasMatches || matches;
+          return matches || option.value === selected;
+        });
+        select.replaceChildren(...visibleOptions);
+        select.value = selected;
+        var message = hasMatches ? "" : noMatchesLabel;
+        if (status.textContent !== message) status.textContent = message;
+      });
+    })();
+  </script>` : ""}
 </body>
 </html>`;
 };

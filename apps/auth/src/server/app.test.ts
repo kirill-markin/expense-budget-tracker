@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
+import type { SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 import { createLoginPageApp } from "../routes/loginPage.js";
 import { createSendCodeApp } from "../routes/sendCode.js";
+import { createVerifyCodeApp } from "../routes/verifyCode.js";
 import { createAuthApp, getAuthRoutes } from "./app.js";
 import type { TokenResult } from "./cognitoAuth.js";
 import { getDemoEmailPassword, resetDemoEmailAccessConfigForTests } from "./demoEmailAccess.js";
@@ -11,12 +13,25 @@ import type { AuthUnhandledErrorEvent } from "./logger.js";
 test("root failures are structured and generic without logging request credentials", async (): Promise<void> => {
   const authorizationCode = "ebt_ac_must-not-log";
   const sessionCookie = "session=session-must-not-log";
+  const otpSessionToken = "challenge-must-not-log";
   const routes = new Hono();
   routes.get("/.well-known/oauth-authorization-server", () => {
     throw new Error(`Metadata failed near ${authorizationCode}`);
   });
   routes.get("/oauth/authorize", () => {
     throw new RangeError(`Client lookup failed near ${authorizationCode}`);
+  });
+  routes.post("/api/agent/verify-code", () => {
+    throw new Error("Agent OTP lookup failed");
+  });
+  const verifyCode = createVerifyCodeApp({
+    lookupBrowserOtpChallenge: async (token) => {
+      throw new Error(`Browser challenge lookup failed near ${token}`);
+    },
+    verifyEmailOtp: async () => assert.fail("Verification requires the stored challenge"),
+    recordBrowserOtpChallengeFailure: async () => assert.fail("Failure recording requires the stored challenge"),
+    markBrowserOtpChallengeUsed: async () => assert.fail("Challenge completion requires the stored challenge"),
+    now: () => 1_700_000_000_000,
   });
   const loginPage = createLoginPageApp({
     resolveBrowserSession: async () => {
@@ -25,7 +40,7 @@ test("root failures are structured and generic without logging request credentia
   });
   const events: AuthUnhandledErrorEvent[] = [];
   const app = createAuthApp({
-    routes: [routes, loginPage],
+    routes: [routes, loginPage, verifyCode],
     log: (event) => { events.push(event); },
   });
 
@@ -45,12 +60,25 @@ test("root failures are structured and generic without logging request credentia
       { headers: { Cookie: sessionCookie } },
     );
 
-    for (const response of [metadata, login, unvalidatedAuthorization]) {
+    const agentVerification = await app.request("https://auth.example.com/api/agent/verify-code", { method: "POST" });
+    const browserVerification = await app.request("https://auth.example.com/api/verify-code", {
+      method: "POST",
+      headers: { "content-type": "application/json", Cookie: `otp_session=${otpSessionToken}` },
+      body: JSON.stringify({ code: "12345678", csrfToken: "csrf-token" }),
+    });
+
+    for (const response of [metadata, login, unvalidatedAuthorization, agentVerification, browserVerification]) {
       assert.equal(response.status, 500);
       assert.equal(response.headers.get("cache-control"), "no-store");
       assert.equal(response.headers.get("pragma"), "no-cache");
+    }
+    for (const response of [metadata, login, unvalidatedAuthorization, agentVerification]) {
       assert.deepEqual(await response.json(), { error: "Internal server error" });
     }
+    assert.deepEqual(await browserVerification.json(), {
+      error: "Internal server error",
+      errorCode: "internal_server_error",
+    });
     assert.equal(unvalidatedAuthorization.headers.get("location"), null);
   } finally {
     if (previousRedirects === undefined) delete process.env.ALLOWED_REDIRECT_URIS;
@@ -60,10 +88,13 @@ test("root failures are structured and generic without logging request credentia
     { domain: "auth", action: "unhandled_error", surface: "oauth", method: "GET", errorType: "error" },
     { domain: "auth", action: "unhandled_error", surface: "login", method: "GET", errorType: "type_error" },
     { domain: "auth", action: "unhandled_error", surface: "oauth", method: "GET", errorType: "range_error" },
+    { domain: "auth", action: "unhandled_error", surface: "api", method: "POST", errorType: "error" },
+    { domain: "auth", action: "unhandled_error", surface: "api", method: "POST", errorType: "error" },
   ]);
   const serializedEvents = JSON.stringify(events);
   assert.equal(serializedEvents.includes(authorizationCode), false);
   assert.equal(serializedEvents.includes(sessionCookie), false);
+  assert.equal(serializedEvents.includes(otpSessionToken), false);
 });
 
 const EMAIL_LOGIN_PATHS = [
@@ -156,7 +187,7 @@ test("the browser send-code route refuses a reserved email domain", async (): Pr
 
     const refused = await postBrowserSendCode(app, "demo@example.com");
     assert.equal(refused.status, 400);
-    assert.deepEqual(await refused.json(), { error: "Invalid email" });
+    assert.deepEqual(await refused.json(), { error: "Invalid email", errorCode: "invalid_email" });
 
     // The guard sits behind the review-email branch, so the allowlisted address on the
     // same reserved domain still signs in.
@@ -169,4 +200,55 @@ test("the browser send-code route refuses a reserved email domain", async (): Pr
     else process.env.DEMO_PASSWORD_DOSTIP = previousPassword;
     resetDemoEmailAccessConfigForTests();
   }
+});
+
+test("browser send-code validates locale metadata and stores the returned OTP session", async (): Promise<void> => {
+  const requestedLocales: Array<SupportedLocale | null> = [];
+  const app = createSendCodeApp({
+    delay: async () => undefined,
+    createCsrfToken: () => "csrf-token",
+    getClientIp: () => "198.51.100.1",
+    initiateEmailOtp: async (email, locale) => {
+      assert.equal(email, "test@example.net.au");
+      requestedLocales.push(locale);
+      return { session: "cognito-otp-session" };
+    },
+    signInWithPassword: async () => assert.fail("The inbox must be verified"),
+    getDemoEmailPassword: () => null,
+    checkAndRecordOtpSendDecision: async () => "allowed",
+    createBrowserOtpChallenge: async (email, session, csrfToken) => {
+      assert.equal(email, "test@example.net.au");
+      assert.equal(session, "cognito-otp-session");
+      assert.equal(csrfToken, "csrf-token");
+      return "opaque-otp-session";
+    },
+    now: () => 1_700_000_000_000,
+  });
+
+  for (const locale of ["ZH-Hans", "unsupported", ["es"], undefined]) {
+    const response = await app.request("https://auth.example.com/api/send-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "Test@Example.net.au", locale }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, csrfToken: "csrf-token" });
+    assert.match(response.headers.getSetCookie().join("\n"), /^otp_session=opaque-otp-session;/u);
+  }
+  assert.deepEqual(requestedLocales, ["zh", null, null, null]);
+});
+
+test("the browser verify-code route identifies missing sessions for login feedback", async (): Promise<void> => {
+  const app = createAuthApp({ routes: getAuthRoutes("cognito"), log: () => {} });
+  const response = await app.request("https://auth.example.com/api/verify-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "12345678" }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Session expired — request a new code",
+    errorCode: "otp_session_expired",
+  });
 });

@@ -2,11 +2,13 @@ import { z } from "zod";
 
 import type { SupportedLocale } from "@/lib/locale";
 import { getLocaleFromRequest } from "@/lib/localeCookie";
+import { SETTINGS_ERROR_CODE_HEADER, SETTINGS_ERROR_CODES } from "@/lib/settingsErrors";
 import { t } from "@/i18n/serverT";
 import { createBadRequestError } from "@/server/api/errors";
 import { handleRoute } from "@/server/api/handleRoute";
 import { parseJsonBody } from "@/server/api/validation";
 import {
+  createInvalidMonthlyShareMonthRangeError,
   disableMonthlyCategoryShare,
   enableMonthlyCategoryShare,
   getMonthlyCategoryShareSettings,
@@ -120,7 +122,7 @@ export const parseMonthlyCategoryShareSettingsBody = (
   const monthTo = hasMonthTo ? parseNullableMonth(body.monthTo, "monthTo") : undefined;
 
   if (monthFrom !== undefined && monthTo !== undefined && monthFrom !== null && monthTo !== null && monthTo < monthFrom) {
-    throw createBadRequestError("monthTo must be the same as or after monthFrom");
+    throw createInvalidMonthlyShareMonthRangeError();
   }
 
   return {
@@ -207,7 +209,10 @@ const assertConfirmationPhrase = (
   confirmationPhrase: string,
 ): void => {
   if (confirmationPhrase !== t(locale, translationKey)) {
-    throw createBadRequestError("Confirmation phrase does not match");
+    throw new MonthlyCategoryShareRequestError(
+      "Confirmation phrase does not match",
+      SETTINGS_ERROR_CODES.confirmationPhraseMismatch,
+    );
   }
 };
 
@@ -251,7 +256,10 @@ const handleMonthlyCategoryShareRoute = async (
         return await run();
       } catch (error) {
         if (error instanceof MonthlyCategoryShareRequestError) {
-          throw createBadRequestError(error.message);
+          return new Response(error.message, {
+            status: 400,
+            headers: error.code === undefined ? undefined : { [SETTINGS_ERROR_CODE_HEADER]: error.code },
+          });
         }
         throw error;
       }

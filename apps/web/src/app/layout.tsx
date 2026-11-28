@@ -1,17 +1,16 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 
 import { readChatCookies } from "@/lib/chatCookies";
 import { isDemoMode } from "@/lib/demoMode";
-import { DEFAULT_USER_SETTINGS, RTL_LOCALES, type SupportedLocale } from "@/lib/locale";
+import { DEFAULT_USER_SETTINGS, LOCALE_REGISTRY, type SupportedLocale } from "@/lib/locale";
 import { getLowercaseCookie } from "@/lib/lowercaseCookie";
-import { getLocaleCookie } from "@/lib/localeCookie";
+import { getInitialLocale, getLocaleCookie, readAppLocaleCookie } from "@/lib/localeCookie";
 import { SYSTEM_THEME_INIT_SCRIPT, type ThemePreference } from "@/lib/theme";
 import { getThemeCookie } from "@/lib/themeCookie";
 import { I18nProvider } from "@/i18n/I18nProvider";
-import { t } from "@/i18n/serverT";
+import { getMessages, t } from "@/i18n/serverT";
 import { buildRequestIdentity } from "@/server/db/requestIdentity";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/workspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -26,6 +25,7 @@ import { AccountMenu } from "@/ui/AccountMenu";
 import { ChatLayoutProvider, ChatLayoutShell } from "@/ui/chat";
 import type { ChatDraftScope } from "@/ui/chat/shell/layout/chatDraftStorage";
 import { CurrencySelector } from "@/ui/CurrencySelector";
+import { DemoLocaleLink } from "@/ui/DemoLocaleLink";
 import { FilteredBanner } from "@/ui/FilteredBanner";
 import { FilteredModeProvider } from "@/ui/FilteredModeProvider";
 import { FormatProvider } from "@/ui/FormatProvider";
@@ -76,8 +76,8 @@ export default async function RootLayout(props: Readonly<{ children: React.React
 
     return (
       <html
-        lang={publicLocale}
-        dir={RTL_LOCALES.has(publicLocale) ? "rtl" : "ltr"}
+        lang={LOCALE_REGISTRY[publicLocale].tag}
+        dir={LOCALE_REGISTRY[publicLocale].direction}
         data-lowercase={String(publicLowercase)}
         data-theme={publicTheme === "system" ? undefined : publicTheme}
         suppressHydrationWarning
@@ -90,7 +90,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
         <body>
           <ThemeProvider initialPreference={publicTheme} canPersist={false} canAdopt={false}>
             <LowercaseProvider initialLowercase={publicLowercase}>
-              <I18nProvider locale={publicLocale}>
+              <I18nProvider locale={publicLocale} messages={getMessages(publicLocale)}>
                 {children}
               </I18nProvider>
             </LowercaseProvider>
@@ -132,24 +132,28 @@ export default async function RootLayout(props: Readonly<{ children: React.React
   } else {
     try {
       const workspaceId = extractWorkspaceIdFromHeaders(headersList);
+      const initialLocale = getInitialLocale(headersList, requestPath);
+      const workspaceBootstrapPath = `/api/workspaces/bootstrap?returnTo=${encodeURIComponent(requestPath || "/")}`;
       currentWorkspaceId = workspaceId;
       if (authEnabled) {
         const resolvedWorkspace = await resolveWorkspaceForCurrentRequestIdentity(
           buildRequestIdentity(headersList),
           workspaceId,
+          initialLocale,
         );
         if (resolvedWorkspace.workspaceId !== workspaceId) {
-          const returnTo = headersList.get("x-request-path") ?? "/";
-          redirect(`/api/workspaces/bootstrap?returnTo=${encodeURIComponent(returnTo)}`);
+          redirect(workspaceBootstrapPath);
         }
       }
       reportingCurrency = await getReportCurrency(currentUserId, workspaceId);
       if (authEnabled) {
         workspaces = await listWorkspaces(currentUserId, workspaceId);
       }
-      const initialLocale = await getLocaleCookie();
       const userSettings = await getUserSettings(currentUserId, workspaceId, initialLocale);
       locale = userSettings.locale;
+      if (authEnabled && readAppLocaleCookie(headersList) !== locale) {
+        redirect(workspaceBootstrapPath);
+      }
       numberFormat = userSettings.numberFormat;
       dateFormat = userSettings.dateFormat;
       autoFilterDelayMinutes = userSettings.autoFilterDelayMinutes;
@@ -171,8 +175,8 @@ export default async function RootLayout(props: Readonly<{ children: React.React
 
   return (
     <html
-      lang={locale}
-      dir={RTL_LOCALES.has(locale) ? "rtl" : "ltr"}
+      lang={LOCALE_REGISTRY[locale].tag}
+      dir={LOCALE_REGISTRY[locale].direction}
       data-lowercase={String(lowercase)}
       data-theme={theme === "system" ? undefined : theme}
       suppressHydrationWarning
@@ -185,7 +189,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       <body>
         <ThemeProvider initialPreference={theme} canPersist={true} canAdopt={themeFromAccount}>
           <LowercaseProvider initialLowercase={lowercase}>
-            <I18nProvider locale={locale}>
+            <I18nProvider locale={locale} messages={getMessages(locale)}>
               <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
                 <TableEditorActivationProvider>
                   <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
@@ -202,10 +206,10 @@ export default async function RootLayout(props: Readonly<{ children: React.React
                         )}
                         <FilteredBanner />
                         <header className="topbar">
-                          <Link href="/" className="topbar-brand">
+                          <DemoLocaleLink href="/" className="topbar-brand">
                             <span className="brand-full">{t(locale, "brand.full")}</span>
                             <span className="brand-short">{t(locale, "brand.short")}</span>
-                          </Link>
+                          </DemoLocaleLink>
                           <div className="topbar-controls">
                             <ModeToggle isDemoMode={demo} />
                             <div className="topbar-actions topbar-end">

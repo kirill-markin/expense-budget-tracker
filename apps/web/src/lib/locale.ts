@@ -1,21 +1,19 @@
+import {
+  DEFAULT_LOCALE,
+  LOCALE_REGISTRY,
+  SUPPORTED_LOCALES,
+  parseSupportedLocale,
+  type SupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
+
 import type { ThemePreference } from "@/lib/theme";
 
-export type SupportedLocale = "en" | "ru" | "es" | "uk" | "fa" | "zh" | "ar" | "he";
+export { DEFAULT_LOCALE, LOCALE_REGISTRY, SUPPORTED_LOCALES, parseSupportedLocale };
+export type { SupportedLocale };
 
-export const SUPPORTED_LOCALES: ReadonlyArray<SupportedLocale> = ["en", "ru", "es", "uk", "fa", "zh", "ar", "he"];
-
-export const LOCALE_LABELS: Readonly<Record<SupportedLocale, string>> = {
-  en: "English",
-  ru: "Русский",
-  es: "Español",
-  uk: "Українська",
-  fa: "فارسی",
-  zh: "中文",
-  ar: "العربية",
-  he: "עברית",
-};
-
-export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(["fa", "ar", "he"]);
+export const RTL_LOCALES: ReadonlySet<SupportedLocale> = new Set(
+  SUPPORTED_LOCALES.filter((locale) => LOCALE_REGISTRY[locale].direction === "rtl"),
+);
 
 export type NumberFormat = "1,234.56" | "1 234,56" | "1.234,56" | "1 234.56";
 
@@ -41,7 +39,7 @@ export type UserSettings = Readonly<{
 }>;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
-  locale: "en",
+  locale: DEFAULT_LOCALE,
   numberFormat: "1,234.56",
   dateFormat: "YYYY-MM-DD",
   autoFilterDelayMinutes: 2,
@@ -50,9 +48,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
 };
 
 export const resolveLocale = (raw: string): SupportedLocale => {
-  if ((SUPPORTED_LOCALES as ReadonlyArray<string>).includes(raw)) {
-    return raw as SupportedLocale;
-  }
-  console.warn("Unknown locale '%s', falling back to 'en'", raw);
-  return "en";
+  const locale = parseSupportedLocale(raw);
+  if (locale !== null) return locale;
+  console.warn("Unknown locale '%s', falling back to '%s'", raw, DEFAULT_LOCALE);
+  return DEFAULT_LOCALE;
 };

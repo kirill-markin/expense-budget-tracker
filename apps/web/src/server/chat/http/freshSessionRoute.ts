@@ -1,5 +1,4 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
-import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
@@ -33,13 +32,14 @@ import {
 } from "@/server/chat/store";
 import type { ChatStreamEvent } from "@/server/chat/types";
 import { log } from "@/server/logger";
+import { getRequestUserLocale } from "@/server/userSettings";
 import {
   CHAT_SERVER_DRAINING_MESSAGE,
   isServerDraining,
 } from "@/server/shutdownCoordinator";
 
 type FreshChatSessionRouteDependencies = Readonly<{
-  getLocaleFromRequest: typeof getLocaleFromRequest;
+  getRequestUserLocale: typeof getRequestUserLocale;
   reserveChatRunStart: typeof reserveChatRunStart;
   releaseChatRunStartReservation: typeof releaseChatRunStartReservation;
   prepareFreshChatRun: typeof prepareFreshChatRun;
@@ -52,7 +52,7 @@ type FreshChatSessionRouteDependencies = Readonly<{
 }>;
 
 const DEFAULT_FRESH_CHAT_SESSION_ROUTE_DEPENDENCIES: FreshChatSessionRouteDependencies = {
-  getLocaleFromRequest,
+  getRequestUserLocale,
   reserveChatRunStart,
   releaseChatRunStartReservation,
   prepareFreshChatRun,
@@ -200,7 +200,7 @@ export const postFreshChatSessionRouteWithDeps = async (
         return new Response(message, { status: 401 });
       }
 
-      const locale = dependencies.getLocaleFromRequest(request);
+      const locale = await dependencies.getRequestUserLocale(request, context.userId, context.workspaceId);
 
       const rateLimitDecision = await dependencies.admitDemoChatTurn(
         context.userId,

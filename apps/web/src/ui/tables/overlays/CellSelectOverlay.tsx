@@ -1,16 +1,18 @@
 import { type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useCellOverlayPosition } from "./useCellOverlayPosition";
 import { cn } from "@/lib/cn";
 
+import type { FilterMultiSelectOption } from "@/ui/tables/shared/filterMultiSelectOption";
 import styles from "@/ui/tables/shared/TableUi.module.css";
 
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 type Props = Readonly<{
-  options: ReadonlyArray<string>;
+  options: ReadonlyArray<FilterMultiSelectOption>;
   currentValue: string | null;
   allowEmpty: boolean;
   rect: Rect;
@@ -20,6 +22,7 @@ type Props = Readonly<{
 
 export const CellSelectOverlay = (props: Props): ReactElement => {
   const { options, currentValue, allowEmpty, rect, onSelect, onClose } = props;
+  const { t, i18n } = useTranslation();
 
   const [search, setSearch] = useState<string>("");
   const [highlightIndex, setHighlightIndex] = useState<number>(-1);
@@ -27,7 +30,8 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const position = useCellOverlayPosition(rect, 200, 260);
 
-  const filtered = buildFiltered(options, allowEmpty, search);
+  const emptyLabel = allowEmpty ? t("table.selectNone") : null;
+  const filtered = buildFiltered(options, emptyLabel, search, i18n.language);
 
   useEffect(() => {
     if (searchRef.current !== null) {
@@ -88,7 +92,7 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
         className={styles.selectSearch}
         type="text"
         value={search}
-        placeholder="Search..."
+        placeholder={t("txn.filterSearchPlaceholder")}
         onChange={handleSearchChange}
         onKeyDown={handleKeyDown}
       />
@@ -122,23 +126,22 @@ export const CellSelectOverlay = (props: Props): ReactElement => {
 type FilteredItem = Readonly<{ key: string; value: string | null; label: string }>;
 
 const buildFiltered = (
-  options: ReadonlyArray<string>,
-  allowEmpty: boolean,
+  options: ReadonlyArray<FilterMultiSelectOption>,
+  emptyLabel: string | null,
   search: string,
+  locale: string,
 ): ReadonlyArray<FilteredItem> => {
-  const query = search.toLowerCase();
+  const query = search.toLocaleLowerCase(locale);
   const items: Array<FilteredItem> = [];
 
-  if (allowEmpty) {
-    const emptyLabel = "\u2014 (none)";
-    if (query.length === 0 || emptyLabel.toLowerCase().includes(query) || "none".includes(query)) {
-      items.push({ key: "__empty__", value: null, label: emptyLabel });
-    }
+  if (emptyLabel !== null && emptyLabel.toLocaleLowerCase(locale).includes(query)) {
+    items.push({ key: "empty", value: null, label: emptyLabel });
   }
 
-  for (const opt of options) {
-    if (query.length === 0 || opt.toLowerCase().includes(query)) {
-      items.push({ key: opt, value: opt, label: opt });
+  for (const option of options) {
+    if (option.label.toLocaleLowerCase(locale).includes(query)
+      || option.value.toLocaleLowerCase(locale).includes(query)) {
+      items.push({ key: `option:${option.value}`, ...option });
     }
   }
 

@@ -29,6 +29,12 @@
  */
 import { z } from "zod";
 
+import {
+  AGENT_KEY_ACTIVE_COUNT_HEADER,
+  AGENT_KEY_LIMIT_HEADER,
+  SETTINGS_ERROR_CODE_HEADER,
+  SETTINGS_ERROR_CODES,
+} from "@/lib/settingsErrors";
 import { getConfiguredAuthMode, type AuthMode } from "@/server/authMode";
 import { extractUserId, extractWorkspaceId } from "@/server/userId";
 import {
@@ -102,7 +108,14 @@ export const postAgentConnectionRouteWithDeps = async (
   if (created.kind === "refused_active_limit") {
     return new Response(
       `You already have ${created.activeCount} active agent API keys, the limit of ${created.limit} per user. Revoke a key you no longer use, then create this one again.`,
-      { status: 409 },
+      {
+        status: 409,
+        headers: {
+          [SETTINGS_ERROR_CODE_HEADER]: SETTINGS_ERROR_CODES.agentKeyLimitReached,
+          [AGENT_KEY_ACTIVE_COUNT_HEADER]: String(created.activeCount),
+          [AGENT_KEY_LIMIT_HEADER]: String(created.limit),
+        },
+      },
     );
   }
 

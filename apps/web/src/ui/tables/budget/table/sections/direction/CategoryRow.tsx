@@ -22,6 +22,7 @@ import {
   type DirectionBlock,
   type YearTotalComputed,
 } from "@/ui/tables/budget/budgetTableLogic";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import styles from "@/ui/tables/budget/BudgetTable.module.css";
 import type { DrillDownFilter } from "@/ui/tables/shared/drillDownFilter";
 import tableStateStyles from "@/ui/tables/shared/TableStates.module.css";
@@ -122,6 +123,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
     onSyncEnd,
   } = props;
   const { t } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const categoryVisibility = getCellVisibility(effectiveAllowlist, category);
   const { monthsTitle: unconvertibleTitle, currenciesTitle: yearUnconvertibleTitle } = createUnconvertibleTitleBuilders({
     currenciesByMonth: unconvertibleCurrenciesByMonth,
@@ -140,7 +142,7 @@ export const CategoryRow = (props: CategoryRowProps): ReactElement => {
         className={`${styles.categoryLabel} ${styles.stickyCol}${categoryVisibility.showData ? " copyable-cell" : ""}${categoryVisibility.maskClass}`}
         onClick={categoryVisibility.showData ? () => copyToClipboard(category) : undefined}
       >
-        {categoryVisibility.showData ? category : MASKED_CELL_PLACEHOLDER}
+        {categoryVisibility.showData ? categoryLabel(category) : MASKED_CELL_PLACEHOLDER}
       </td>
       {columnSequence.map((column, index) => {
         const yearData = column.kind === "year-total" ? yearComputed.get(column.year) : undefined;

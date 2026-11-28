@@ -9,6 +9,8 @@
  * JWT verification stays in the OAuth session module.
  */
 import { randomBytes } from "node:crypto";
+import { getLocalizedSignInEmailCopy } from "@expense-budget-tracker/agent-shared/auth-email-copy";
+import type { SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 import {
   AdminCreateUserCommand,
   AdminSetUserPasswordCommand,
@@ -168,41 +170,58 @@ const createUser = async (email: string, dependencies: InitiateEmailOtpDependenc
   }
 };
 
+const requireCognitoSession = (result: Record<string, unknown>, operation: string): string => {
+  const session = result.Session;
+  if (typeof session !== "string" || session === "") {
+    throw new Error(`Cognito ${operation} did not return a session`);
+  }
+  return session;
+};
+
 export const initiateEmailOtpWithDependencies = async (
   email: string,
+  localizedEmailLocale: SupportedLocale | null,
   dependencies: InitiateEmailOtpDependencies,
 ): Promise<InitiateAuthResult> => {
   const clientId = getClientId();
 
-  const initiateAuth = async (): Promise<Record<string, unknown>> =>
-    dependencies.request("InitiateAuth", {
+  const initiateAuth = async (): Promise<InitiateAuthResult> => {
+    const result = await dependencies.request("InitiateAuth", {
       AuthFlow: "USER_AUTH",
       ClientId: clientId,
-      AuthParameters: {
-        USERNAME: email,
-        PREFERRED_CHALLENGE: "EMAIL_OTP",
-      },
+      AuthParameters: localizedEmailLocale === null
+        ? { USERNAME: email, PREFERRED_CHALLENGE: "EMAIL_OTP" }
+        : { USERNAME: email },
     });
+    const session = requireCognitoSession(result, "InitiateAuth");
+    if (localizedEmailLocale === null) return { session };
 
-  let result: Record<string, unknown>;
+    if (!Array.isArray(result.AvailableChallenges) || !result.AvailableChallenges.includes("EMAIL_OTP")) {
+      throw new Error("Cognito InitiateAuth did not offer the EMAIL_OTP challenge");
+    }
+
+    // CustomEmailSender_Authentication receives ClientMetadata from the challenge response.
+    const otp = await dependencies.request("RespondToAuthChallenge", {
+      ClientId: clientId,
+      ChallengeName: "SELECT_CHALLENGE",
+      Session: session,
+      ChallengeResponses: { USERNAME: email, ANSWER: "EMAIL_OTP" },
+      ClientMetadata: { locale: localizedEmailLocale },
+    });
+    if (otp.ChallengeName !== "EMAIL_OTP") {
+      throw new Error("Cognito RespondToAuthChallenge did not return the EMAIL_OTP challenge");
+    }
+    return { session: requireCognitoSession(otp, "RespondToAuthChallenge") };
+  };
+
   try {
-    result = await initiateAuth();
+    return await initiateAuth();
   } catch (err) {
     const cognitoType = (err as Error & { cognitoType?: string }).cognitoType;
-    if (cognitoType === "UserNotFoundException") {
-      await createUser(email, dependencies);
-      result = await initiateAuth();
-    } else {
-      throw err;
-    }
+    if (cognitoType !== "UserNotFoundException") throw err;
+    await createUser(email, dependencies);
+    return initiateAuth();
   }
-
-  const session = result.Session as string | undefined;
-  if (session === undefined || session === "") {
-    throw new Error("Cognito InitiateAuth did not return a session");
-  }
-
-  return { session };
 };
 
 const initiateEmailOtpDependencies: InitiateEmailOtpDependencies = {
@@ -212,7 +231,14 @@ const initiateEmailOtpDependencies: InitiateEmailOtpDependencies = {
 };
 
 export const initiateEmailOtp = (email: string): Promise<InitiateAuthResult> =>
-  initiateEmailOtpWithDependencies(email, initiateEmailOtpDependencies);
+  initiateEmailOtpWithDependencies(email, null, initiateEmailOtpDependencies);
+
+export const initiateBrowserEmailOtp = (email: string, locale: SupportedLocale | null): Promise<InitiateAuthResult> =>
+  initiateEmailOtpWithDependencies(
+    email,
+    getLocalizedSignInEmailCopy(locale) === undefined ? null : locale,
+    initiateEmailOtpDependencies,
+  );
 
 export const verifyEmailOtp = async (
   email: string,

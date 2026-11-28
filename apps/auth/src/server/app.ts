@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { browserError } from "../i18n/browserErrors.js";
 import health from "../routes/health.js";
 import sendCode from "../routes/sendCode.js";
 import verifyCode from "../routes/verifyCode.js";
@@ -31,16 +32,21 @@ export const createAuthApp = (dependencies: AuthAppDependencies): Hono => {
   const app = new Hono();
 
   app.onError((error, c) => {
+    const { path, method } = c.req;
     dependencies.log({
       domain: "auth",
       action: "unhandled_error",
-      surface: getErrorSurface(c.req.path),
-      method: getErrorMethod(c.req.method),
+      surface: getErrorSurface(path),
+      method: getErrorMethod(method),
       errorType: getSafeErrorType(error),
     });
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
-    return c.json({ error: "Internal server error" }, 500);
+    const response = browserError("internal_server_error");
+    if (method === "POST" && (path === "/api/send-code" || path === "/api/verify-code")) {
+      return c.json(response, 500);
+    }
+    return c.json({ error: response.error }, 500);
   });
 
   // API endpoints are same-origin only; login-page JavaScript is their browser caller.

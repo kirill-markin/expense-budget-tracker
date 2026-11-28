@@ -3,6 +3,7 @@ import { type ReactElement, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { LedgerEntry } from "@/server/transactions/getTransactions";
 
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import { CellSelectOverlay } from "@/ui/tables/overlays/CellSelectOverlay";
 import styles from "@/ui/tables/shared/TableUi.module.css";
 
@@ -17,6 +18,7 @@ type Props = Readonly<{
 
 export const EditableCategory = (props: Props): ReactElement => {
   const { entry, categories, maskClass, onCategoryChange } = props;
+  const categoryLabel = useCategoryLabel();
 
   const [open, setOpen] = useState<boolean>(false);
   const [rect, setRect] = useState<Rect | null>(null);
@@ -49,10 +51,10 @@ export const EditableCategory = (props: Props): ReactElement => {
       className={cn(styles.cell, !isMasked ? styles.editable : "", !isMasked ? styles.editableSelect : "", maskClass)}
       onClick={isMasked ? undefined : handleClick}
     >
-      {entry.category ?? "\u2014"}
+      {entry.category === null ? "\u2014" : categoryLabel(entry.category)}
       {open && rect !== null && (
         <CellSelectOverlay
-          options={categories}
+          options={categories.map((category) => ({ value: category, label: categoryLabel(category) }))}
           currentValue={entry.category}
           allowEmpty={true}
           rect={rect}

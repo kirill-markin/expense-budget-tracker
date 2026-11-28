@@ -38,6 +38,7 @@ import {
   withAccountLiquidity,
   withAccountType,
 } from "./balancesTableApi";
+import { ACCOUNT_GROUP_LABEL_KEYS } from "./accountGroupLabels";
 import { formatDaysAgoLabel, getDaysAgoValue } from "./balancesTableDaysAgo";
 
 type Props = Readonly<{
@@ -55,8 +56,10 @@ type Props = Readonly<{
 type Rect = Readonly<{ top: number; left: number; width: number; height: number }>;
 
 const LIQUIDITY_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_LIQUIDITY_VALUES;
-const ACCOUNT_TYPE_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES;
-const ACCOUNT_GROUP_OPTIONS: ReadonlyArray<string> = ACCOUNT_METADATA_GROUP_VALUES;
+const ACCOUNT_TYPE_LABEL_KEYS: Readonly<Record<AccountMetadataAccountType, string>> = {
+  personal: "balances.accountTypePersonal",
+  business: "balances.accountTypeBusiness",
+};
 
 const formatDate = (isoString: string): string => {
   const date = new Date(isoString);
@@ -97,7 +100,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
   const accountGroupCellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
 
   const getAccountGroupLabel = (accountGroup: AccountMetadataGroup): string =>
-    t(`balances.accountGroup${accountGroup.charAt(0).toUpperCase()}${accountGroup.slice(1)}`);
+    t(ACCOUNT_GROUP_LABEL_KEYS[accountGroup]);
 
   const handleLiquidityClick = useCallback((accountId: string): void => {
     const cell = liquidityCellRefs.current.get(accountId);
@@ -116,7 +119,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
     setLiquidityRect(null);
     if (value === null || value === oldLiquidity) return;
     if (!isAccountMetadataLiquidity(value)) {
-      setSaveError(`Invalid liquidity selection: ${value}`);
+      setSaveError(t("balances.invalidLiquidity", { value }));
       return;
     }
 
@@ -127,7 +130,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       setLocalAccounts((prev) => withAccountLiquidity(prev, accountId, oldLiquidity));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
-  }, [setLocalAccounts, setSaveError]);
+  }, [setLocalAccounts, setSaveError, t]);
 
   const handleLiquidityClose = useCallback((): void => {
     setLiquidityOpen(null);
@@ -151,7 +154,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
     setAccountTypeRect(null);
     if (value === null || value === oldAccountType) return;
     if (!isAccountMetadataAccountType(value)) {
-      setSaveError(`Invalid account type selection: ${value}`);
+      setSaveError(t("balances.invalidAccountType", { value }));
       return;
     }
 
@@ -162,7 +165,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       setLocalAccounts((prev) => withAccountType(prev, accountId, oldAccountType));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
-  }, [setLocalAccounts, setSaveError]);
+  }, [setLocalAccounts, setSaveError, t]);
 
   const handleAccountTypeClose = useCallback((): void => {
     setAccountTypeOpen(null);
@@ -186,7 +189,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
     setAccountGroupRect(null);
     if (value === null || value === oldAccountGroup) return;
     if (!isAccountMetadataGroup(value)) {
-      setSaveError(`Invalid account group selection: ${value}`);
+      setSaveError(t("balances.invalidAccountGroup", { value }));
       return;
     }
 
@@ -197,7 +200,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
       setLocalAccounts((prev) => withAccountGroup(prev, accountId, oldAccountGroup));
       setSaveError(err instanceof Error ? err.message : String(err));
     });
-  }, [setLocalAccounts, setSaveError]);
+  }, [setLocalAccounts, setSaveError, t]);
 
   const handleAccountGroupClose = useCallback((): void => {
     setAccountGroupOpen(null);
@@ -241,7 +244,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
           {a.liquidity}
           {liquidityOpen === a.accountId && liquidityRect !== null && (
             <CellSelectOverlay
-              options={LIQUIDITY_OPTIONS}
+              options={LIQUIDITY_OPTIONS.map((value) => ({ value, label: value }))}
               currentValue={a.liquidity}
               allowEmpty={false}
               rect={liquidityRect}
@@ -267,10 +270,10 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
           className={cn(tableStyles.cell, !isMasked ? tableStyles.editable : "", !isMasked ? tableStyles.editableSelect : "", maskClass)}
           onClick={isMasked ? undefined : () => handleAccountTypeClick(a.accountId)}
         >
-          {t(`balances.accountType${a.accountType.charAt(0).toUpperCase()}${a.accountType.slice(1)}`)}
+          {t(ACCOUNT_TYPE_LABEL_KEYS[a.accountType])}
           {accountTypeOpen === a.accountId && accountTypeRect !== null && (
             <CellSelectOverlay
-              options={ACCOUNT_TYPE_OPTIONS}
+              options={ACCOUNT_METADATA_ACCOUNT_TYPE_VALUES.map((value) => ({ value, label: t(ACCOUNT_TYPE_LABEL_KEYS[value]) }))}
               currentValue={a.accountType}
               allowEmpty={false}
               rect={accountTypeRect}
@@ -299,7 +302,7 @@ export const BalanceAccountsTable = (props: Props): ReactElement => {
           {getAccountGroupLabel(a.accountGroup)}
           {accountGroupOpen === a.accountId && accountGroupRect !== null && (
             <CellSelectOverlay
-              options={ACCOUNT_GROUP_OPTIONS}
+              options={ACCOUNT_METADATA_GROUP_VALUES.map((value) => ({ value, label: getAccountGroupLabel(value) }))}
               currentValue={a.accountGroup}
               allowEmpty={false}
               rect={accountGroupRect}

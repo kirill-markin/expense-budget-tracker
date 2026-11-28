@@ -16,8 +16,7 @@ export const getDaysAgoValue = (isoString: string, now: Date): number => {
 
 export const formatDaysAgoLabel = (days: number, t: Translate): string => {
   if (days === 0) return t("balances.daysAgoToday");
-  if (days === 1) return t("balances.daysAgoOne");
-  return t("balances.daysAgoMany", { count: days });
+  return t("balances.elapsedDays", { count: days });
 };
 
 const getDaysAgoSortValue = (isoString: string | null, now: Date): number => {

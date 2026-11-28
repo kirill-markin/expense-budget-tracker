@@ -3,8 +3,8 @@ import { headers } from "next/headers";
 
 import { cn } from "@/lib/cn";
 import { isDemoMode } from "@/lib/demoMode";
-import { DEFAULT_USER_SETTINGS } from "@/lib/locale";
-import { getLocaleCookie } from "@/lib/localeCookie";
+import { DEFAULT_USER_SETTINGS, type SupportedLocale } from "@/lib/locale";
+import { getDemoLocalePreference, getLocaleCookie } from "@/lib/localeCookie";
 import { t } from "@/i18n/serverT";
 import { getDemoCategories } from "@/server/demo/data";
 import { getFilteredCategories } from "@/server/filteredCategories";
@@ -26,14 +26,15 @@ import settingsStyles from "@/ui/settings/SettingsForm.module.css";
 
 export const dynamic = "force-dynamic";
 
-async function UserSettingsData() {
+async function UserSettingsData({ effectiveLocale }: Readonly<{ effectiveLocale: SupportedLocale }>) {
   const demo = await isDemoMode();
 
   if (demo) {
-    const locale = await getLocaleCookie();
+    const localePreference = getDemoLocalePreference(await headers());
     return (
       <UserSettingsForm
-        locale={locale}
+        locale={localePreference}
+        effectiveLocale={effectiveLocale}
         numberFormat={DEFAULT_USER_SETTINGS.numberFormat}
         dateFormat={DEFAULT_USER_SETTINGS.dateFormat}
         autoFilterDelayMinutes={DEFAULT_USER_SETTINGS.autoFilterDelayMinutes}
@@ -50,6 +51,7 @@ async function UserSettingsData() {
   return (
     <UserSettingsForm
       locale={settings.locale}
+      effectiveLocale={settings.locale}
       numberFormat={settings.numberFormat}
       dateFormat={settings.dateFormat}
       autoFilterDelayMinutes={settings.autoFilterDelayMinutes}
@@ -159,7 +161,7 @@ export default async function SettingsPage() {
       <section className="panel">
         <h1 className="title">{t(locale, "settings.userSettings")}</h1>
         <Suspense fallback={<LoadingIndicator />}>
-          <UserSettingsData />
+          <UserSettingsData effectiveLocale={locale} />
         </Suspense>
       </section>
 

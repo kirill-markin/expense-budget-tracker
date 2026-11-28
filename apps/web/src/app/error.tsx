@@ -39,12 +39,12 @@ export default function GlobalError(props: Props): ReactElement {
     <main className="container">
       <section className="panel" data-testid="page-load-error">
         <div className={alertStyles.alert}>
-          <strong>Failed to load page</strong>
+          <strong>{t("pageError.loadFailed")}</strong>
           <span>{error.message}</span>
         </div>
         <div className={controlsStyles.segmented}>
           <button className={controlsStyles.segment} type="button" onClick={reset}>
-            Retry
+            {t("pageError.retry")}
           </button>
           {canResetDemoAdjustments && (
             <button

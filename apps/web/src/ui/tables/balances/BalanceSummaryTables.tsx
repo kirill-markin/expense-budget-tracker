@@ -18,6 +18,7 @@ import type { ColumnDef, SortState } from "@/ui/tables/shared/data-table/types";
 import { formatAmount } from "@/ui/tables/shared/format";
 import tableStyles from "@/ui/tables/shared/TableUi.module.css";
 import { HorizontalTableScroll } from "@/ui/tables/shared/HorizontalTableScroll";
+import { ACCOUNT_GROUP_LABEL_KEYS } from "./accountGroupLabels";
 import balancesStyles from "./BalancesTable.module.css";
 import type { ReportingCurrencyTotals } from "./balancesTableModel";
 
@@ -73,7 +74,7 @@ export const BalanceSummaryTables = (props: BalanceSummaryTablesProps): ReactEle
   const formatUnconvertibleReason = (currencies: string): string =>
     t("common.unconvertibleReason", { currencies });
   const getAccountGroupLabel = (accountGroup: AccountMetadataGroup): string =>
-    t(`balances.accountGroup${accountGroup.charAt(0).toUpperCase()}${accountGroup.slice(1)}`);
+    t(ACCOUNT_GROUP_LABEL_KEYS[accountGroup]);
 
   const totalsColumns: ReadonlyArray<ColumnDef<CurrencyTotal>> = [
     {

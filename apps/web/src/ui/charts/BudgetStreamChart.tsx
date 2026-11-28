@@ -11,6 +11,7 @@ import { isCategoryVisible } from "@/lib/dataMask";
 import type { NumberFormat } from "@/lib/locale";
 import type { BudgetRow } from "@/server/budget/getBudgetGrid";
 import { useFormat } from "@/ui/FormatProvider";
+import { useCategoryLabel } from "@/ui/hooks/useCategoryLabel";
 import styles from "@/ui/charts/BudgetStreamChart.module.css";
 import { useChartSize } from "@/ui/charts/useChartSize";
 import { streamAxisLabelWidth, streamAxisTicks, streamYAxisGutter } from "@/ui/charts/streamAxisTicks";
@@ -148,6 +149,7 @@ const findClosestDateIndex = (
 export const BudgetStreamChart = (props: Props): ReactElement => {
   const { rows, allowlist, reportingCurrency, onMonthClick } = props;
   const { t, i18n } = useTranslation();
+  const categoryLabel = useCategoryLabel();
   const { numberFormat } = useFormat();
   const masked = allowlist !== null && allowlist.size === 0;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -183,7 +185,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
   if (incomeData.length === 0 && spendData.length === 0 && !masked) {
     return (
       <div ref={chartRef} className={styles.chartWrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Budget streamgraph">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("chart.budgetStreamgraph")}>
           <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--muted)" fontSize={14}>
             {t("chart.noData")}
           </text>
@@ -363,7 +365,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {incomeCategories.map((cat) => (
             <span key={`legend-income-${cat}`} className={styles.legendItem}>
               <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
-              {cat}
+              {categoryLabel(cat)}
             </span>
           ))}
         </>
@@ -374,7 +376,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           {spendCategories.map((cat) => (
             <span key={`legend-spend-${cat}`} className={styles.legendItem}>
               <span className={styles.legendSwatch} style={{ background: colorScale(cat) }} />
-              {cat}
+              {categoryLabel(cat)}
             </span>
           ))}
         </>
@@ -399,7 +401,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label="Budget streamgraph"
+          aria-label={t("chart.budgetStreamgraph")}
           style={!masked ? { cursor: "var(--cursor-pointer)" } : undefined}
           onMouseMove={!masked ? handleMouseMove : undefined}
           onMouseLeave={!masked ? handleMouseLeave : undefined}
@@ -549,7 +551,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               {hover.incomeItems.map((item) => (
                 <div key={`tip-i-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
-                  <span>{item.category}</span>
+                  <span>{categoryLabel(item.category)}</span>
                   <span className={styles.tooltipValue}><NumericText>{formatAmountFull(item.value, numberFormat)}</NumericText></span>
                 </div>
               ))}
@@ -563,7 +565,7 @@ export const BudgetStreamChart = (props: Props): ReactElement => {
               {hover.spendItems.map((item) => (
                 <div key={`tip-s-${item.category}`} className={styles.tooltipRow}>
                   <span className={styles.legendSwatch} style={{ background: item.color }} />
-                  <span>{item.category}</span>
+                  <span>{categoryLabel(item.category)}</span>
                   <span className={styles.tooltipValue}><NumericText>{formatAmountFull(item.value, numberFormat)}</NumericText></span>
                 </div>
               ))}

@@ -1,5 +1,4 @@
 import { CHAT_MODEL_ID } from "@/lib/chatModels";
-import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { isDemoModeFromRequest } from "@/lib/demoMode";
 import { ti } from "@/i18n/serverT";
 import { handleRoute } from "@/server/api/handleRoute";
@@ -43,6 +42,7 @@ import {
   requireAcceptedChatTurn,
 } from "@/server/chat/store";
 import { log } from "@/server/logger";
+import { getRequestUserLocale } from "@/server/userSettings";
 import {
   CHAT_SERVER_DRAINING_MESSAGE,
   isServerDraining,
@@ -53,7 +53,7 @@ type GetChatRouteDependencies = Readonly<{
 }>;
 
 type PostChatRouteDependencies = Readonly<{
-  getLocaleFromRequest: typeof getLocaleFromRequest;
+  getRequestUserLocale: typeof getRequestUserLocale;
   resolveSnapshotWithRunRecovery: typeof resolveSnapshotWithRunRecovery;
   reserveChatRunStart: typeof reserveChatRunStart;
   releaseChatRunStartReservation: typeof releaseChatRunStartReservation;
@@ -78,7 +78,7 @@ const DEFAULT_GET_CHAT_ROUTE_DEPENDENCIES: GetChatRouteDependencies = {
 };
 
 const DEFAULT_POST_CHAT_ROUTE_DEPENDENCIES: PostChatRouteDependencies = {
-  getLocaleFromRequest,
+  getRequestUserLocale,
   resolveSnapshotWithRunRecovery,
   reserveChatRunStart,
   releaseChatRunStartReservation,
@@ -214,7 +214,7 @@ export const postChatRouteWithDeps = async (
       });
       return new Response(
         ti(
-          dependencies.getLocaleFromRequest(request),
+          await dependencies.getRequestUserLocale(request, context.userId, context.workspaceId),
           "chat.demoRateLimitReached",
           { limit: rateLimitDecision.limit },
         ),
@@ -261,6 +261,7 @@ export const postChatRouteWithDeps = async (
 
     let runtimeStarted = false;
     try {
+      const locale = await dependencies.getRequestUserLocale(request, context.userId, context.workspaceId);
       const prepareResult = await dependencies.prepareChatRun(
         context.userId,
         context.workspaceId,
@@ -278,7 +279,6 @@ export const postChatRouteWithDeps = async (
         preparedRun.sessionId,
         preparedRun.activeRunId,
       );
-      const locale = dependencies.getLocaleFromRequest(request);
       dependencies.log(createChatModelRoutingLogEvent({
         requestedModel: body.model,
         decision: preparedRun.modelRouting,

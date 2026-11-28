@@ -1,9 +1,9 @@
-/**
- * Login page translations for all supported locales.
- * Plain object lookup — no i18next library needed for the auth service.
- */
+import { type SupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 
 type LoginTranslations = Readonly<{
+  language: string;
+  languageSearch: string;
+  noLanguageMatches: string;
   title: string;
   email: string;
   sendCode: string;
@@ -14,8 +14,15 @@ type LoginTranslations = Readonly<{
   checkEmail: string;
 }>;
 
-const translations: Readonly<Record<string, LoginTranslations>> = {
+const englishLanguagePicker = {
+  language: "Language",
+  languageSearch: "Search languages",
+  noLanguageMatches: "No matching languages",
+};
+
+const translations: Readonly<Record<SupportedLocale, LoginTranslations>> = {
   en: {
+    ...englishLanguagePicker,
     title: "Sign in",
     email: "Email",
     sendCode: "Send code",
@@ -26,6 +33,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "Check your email for an 8-digit code. If you don't see it, check your spam folder.",
   },
   es: {
+    ...englishLanguagePicker,
     title: "Iniciar sesi\u00f3n",
     email: "Correo electr\u00f3nico",
     sendCode: "Enviar c\u00f3digo",
@@ -36,6 +44,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "Revisa tu correo para un c\u00f3digo de 8 d\u00edgitos. Si no lo ves, revisa la carpeta de spam.",
   },
   zh: {
+    ...englishLanguagePicker,
     title: "\u767b\u5f55",
     email: "\u90ae\u7bb1",
     sendCode: "\u53d1\u9001\u9a8c\u8bc1\u7801",
@@ -46,6 +55,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "\u8bf7\u68c0\u67e5\u90ae\u7bb1\u4e2d\u7684 8 \u4f4d\u9a8c\u8bc1\u7801\u3002\u5982\u679c\u6ca1\u6709\u770b\u5230\uff0c\u8bf7\u68c0\u67e5\u5783\u573e\u90ae\u4ef6\u6587\u4ef6\u5939\u3002",
   },
   ru: {
+    ...englishLanguagePicker,
     title: "\u0412\u0445\u043e\u0434",
     email: "Email",
     sendCode: "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043a\u043e\u0434",
@@ -56,6 +66,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "\u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043f\u043e\u0447\u0442\u0443 \u2014 \u043c\u044b \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b\u0438 8-\u0437\u043d\u0430\u0447\u043d\u044b\u0439 \u043a\u043e\u0434. \u0415\u0441\u043b\u0438 \u043f\u0438\u0441\u044c\u043c\u0430 \u043d\u0435\u0442, \u043f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043f\u0430\u043f\u043a\u0443 \u0441\u043f\u0430\u043c\u0430.",
   },
   uk: {
+    ...englishLanguagePicker,
     title: "\u0412\u0445\u0456\u0434",
     email: "Email",
     sendCode: "\u041d\u0430\u0434\u0456\u0441\u043b\u0430\u0442\u0438 \u043a\u043e\u0434",
@@ -66,6 +77,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "\u041f\u0435\u0440\u0435\u0432\u0456\u0440\u0442\u0435 \u043f\u043e\u0448\u0442\u0443 \u2014 \u043c\u0438 \u043d\u0430\u0434\u0456\u0441\u043b\u0430\u043b\u0438 8-\u0437\u043d\u0430\u0447\u043d\u0438\u0439 \u043a\u043e\u0434. \u042f\u043a\u0449\u043e \u043b\u0438\u0441\u0442\u0430 \u043d\u0435\u043c\u0430\u0454, \u043f\u0435\u0440\u0435\u0432\u0456\u0440\u0442\u0435 \u043f\u0430\u043f\u043a\u0443 \u0441\u043f\u0430\u043c\u0443.",
   },
   fa: {
+    ...englishLanguagePicker,
     title: "\u0648\u0631\u0648\u062f",
     email: "\u0627\u06cc\u0645\u06cc\u0644",
     sendCode: "\u0627\u0631\u0633\u0627\u0644 \u06a9\u062f",
@@ -76,6 +88,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "\u0627\u06cc\u0645\u06cc\u0644 \u062e\u0648\u062f \u0631\u0627 \u0628\u0631\u0627\u06cc \u06a9\u062f \u06f8 \u0631\u0642\u0645\u06cc \u0628\u0631\u0631\u0633\u06cc \u06a9\u0646\u06cc\u062f. \u0627\u06af\u0631 \u0622\u0646 \u0631\u0627 \u0646\u0645\u06cc\u200c\u0628\u06cc\u0646\u06cc\u062f\u060c \u067e\u0648\u0634\u0647 \u0647\u0631\u0632\u0646\u0627\u0645\u0647 \u0631\u0627 \u0628\u0631\u0631\u0633\u06cc \u06a9\u0646\u06cc\u062f.",
   },
   ar: {
+    ...englishLanguagePicker,
     title: "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644",
     email: "\u0627\u0644\u0628\u0631\u064a\u062f \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a",
     sendCode: "\u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0631\u0645\u0632",
@@ -86,6 +99,7 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
     checkEmail: "\u062a\u062d\u0642\u0642 \u0645\u0646 \u0628\u0631\u064a\u062f\u0643 \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a \u0644\u0644\u062d\u0635\u0648\u0644 \u0639\u0644\u0649 \u0631\u0645\u0632 \u0645\u0643\u0648\u0646 \u0645\u0646 8 \u0623\u0631\u0642\u0627\u0645. \u0625\u0630\u0627 \u0644\u0645 \u062a\u062c\u062f\u0647\u060c \u062a\u062d\u0642\u0642 \u0645\u0646 \u0645\u062c\u0644\u062f \u0627\u0644\u0631\u0633\u0627\u0626\u0644 \u063a\u064a\u0631 \u0627\u0644\u0645\u0631\u063a\u0648\u0628 \u0641\u064a\u0647\u0627.",
   },
   he: {
+    ...englishLanguagePicker,
     title: "\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea",
     email: "\u05d0\u05d9\u05de\u05d9\u05d9\u05dc",
     sendCode: "\u05e9\u05dc\u05d7 \u05e7\u05d5\u05d3",
@@ -97,9 +111,4 @@ const translations: Readonly<Record<string, LoginTranslations>> = {
   },
 };
 
-export const t = (locale: string, key: keyof LoginTranslations): string => {
-  const strings = translations[locale] ?? translations.en;
-  return strings[key];
-};
-
-export type { LoginTranslations };
+export const t = (locale: SupportedLocale, key: keyof LoginTranslations): string => translations[locale][key];

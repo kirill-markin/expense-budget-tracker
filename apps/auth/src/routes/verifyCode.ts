@@ -12,6 +12,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { browserError } from "../i18n/browserErrors.js";
 import {
   lookupBrowserOtpChallenge,
   markBrowserOtpChallengeUsed,
@@ -67,20 +68,20 @@ export const createVerifyCodeApp = (dependencies: VerifyCodeDependencies): Hono 
     const otpSessionToken = getCookie(c, "otp_session") ?? "";
     if (otpSessionToken === "") {
       clearOtpSessionCookie(c);
-      return c.json({ error: "Session expired — request a new code" }, 400);
+      return c.json(browserError("otp_session_expired"), 400);
     }
 
     const challenge = await dependencies.lookupBrowserOtpChallenge(otpSessionToken, dependencies.now());
     if (challenge.status !== "active") {
       clearOtpSessionCookie(c);
-      return c.json({ error: "Session expired — request a new code" }, 400);
+      return c.json(browserError("otp_session_expired"), 400);
     }
 
     let body: { code?: string; csrfToken?: string };
     try {
       body = await c.req.json<{ code?: string; csrfToken?: string }>();
     } catch {
-      return c.json({ error: "Invalid request body" }, 400);
+      return c.json(browserError("invalid_request_body"), 400);
     }
 
     const csrfToken = typeof body.csrfToken === "string" ? body.csrfToken : "";
@@ -88,12 +89,12 @@ export const createVerifyCodeApp = (dependencies: VerifyCodeDependencies): Hono 
       csrfToken.length === challenge.csrfToken.length
       && timingSafeEqual(Buffer.from(csrfToken), Buffer.from(challenge.csrfToken));
     if (!csrfMatch) {
-      return c.json({ error: "Session expired — request a new code" }, 400);
+      return c.json(browserError("otp_session_expired"), 400);
     }
 
     const code = typeof body.code === "string" ? body.code.trim() : "";
     if (!CODE_RE.test(code)) {
-      return c.json({ error: "Enter an 8-digit code" }, 400);
+      return c.json(browserError("invalid_otp_code"), 400);
     }
 
     let tokens: Awaited<ReturnType<typeof verifyEmailOtp>>;
@@ -114,19 +115,19 @@ export const createVerifyCodeApp = (dependencies: VerifyCodeDependencies): Hono 
             maskedEmail: maskEmail(challenge.email),
           });
           clearOtpSessionCookie(c);
-          return c.json({ error: "Session expired — request a new code" }, 400);
+          return c.json(browserError("otp_session_expired"), 400);
         }
         log({ domain: "auth", action: "verify_code_error", error: error instanceof Error ? error.message : String(error) });
-        return c.json({ error: "Verification failed — please try again" }, 400);
+        return c.json(browserError("verify_code_failed"), 400);
       }
 
       if (isExpiredOtpCodeError(error)) {
         clearOtpSessionCookie(c);
-        return c.json({ error: "Session expired — request a new code" }, 400);
+        return c.json(browserError("otp_session_expired"), 400);
       }
 
       log({ domain: "auth", action: "verify_code_error", error: error instanceof Error ? error.message : String(error) });
-      return c.json({ error: "Verification failed — please try again" }, 400);
+      return c.json(browserError("verify_code_failed"), 400);
     }
 
     await dependencies.markBrowserOtpChallengeUsed(

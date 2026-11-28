@@ -8,8 +8,7 @@ export const isDemoMode = async (): Promise<boolean> => {
   return cookieStore.get(DEMO_MODE_COOKIE)?.value === "true";
 };
 
-/** Check if demo mode is active from a raw Request. For API route handlers. */
-export const isDemoModeFromRequest = (request: Request): boolean => {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  return cookieHeader.split(";").some((c) => c.trim() === `${DEMO_MODE_COOKIE}=true`);
-};
+export const isDemoModeFromHeaders = (requestHeaders: Headers): boolean =>
+  (requestHeaders.get("cookie")?.split(";") ?? []).some((cookie) => cookie.trim() === `${DEMO_MODE_COOKIE}=true`);
+
+export const isDemoModeFromRequest = (request: Request): boolean => isDemoModeFromHeaders(request.headers);

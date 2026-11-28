@@ -222,16 +222,20 @@ export const readChatSessionTargetFromSearchParams = (
 
 export const buildChatTargetUrl = (
   target: ChatTarget,
+  demoPreviewSearchParams: URLSearchParams | null,
 ): string => {
+  const searchParams = new URLSearchParams(demoPreviewSearchParams ?? undefined);
   if (target.kind === "draft") {
     parseChatIdentifier(target.draftId, "Chat draft target draftId");
-    return "/chat";
+    searchParams.delete("session");
+  } else {
+    const sessionId = parseChatIdentifier(
+      target.sessionId,
+      "Chat session target sessionId",
+    );
+    searchParams.set("session", sessionId);
   }
 
-  const sessionId = parseChatIdentifier(
-    target.sessionId,
-    "Chat session target sessionId",
-  );
-  const searchParams = new URLSearchParams({ session: sessionId });
-  return `/chat?${searchParams.toString()}`;
+  const search = searchParams.toString();
+  return search === "" ? "/chat" : `/chat?${search}`;
 };

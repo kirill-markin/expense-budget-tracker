@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { PROXY_JWT_UNAUTHORIZED_MESSAGE } from "@expense-budget-tracker/agent-shared/proxy-jwt";
+import { getLocaleFromRequest } from "@/lib/localeCookie";
 import { isPublicPath, proxy, resolveWorkspaceIdFromCookie } from "./proxy";
 
 const MANAGED_ENV_KEYS = [
@@ -134,6 +135,71 @@ test("proxy keeps unrelated app and API routes authenticated", async (): Promise
     assert.equal(apiResponse.status, 307);
     assert.match(apiResponse.headers.get("location") ?? "", /^https:\/\/auth\.example\.com\/login/u);
   });
+});
+
+test("proxy sends only supported app locale hints to Cognito using the full tag", async (): Promise<void> => {
+  await withCognitoEnv(async (): Promise<void> => {
+    const inbound = new NextRequest("https://app.example.com/transactions?month=2026-04&locale=ZH-hans", {
+      headers: { cookie: "demo=true; locale=ar; app_locale=ru" },
+    });
+    const response = await proxy(inbound);
+    const preferred = new URL(response.headers.get("location")!);
+    assert.equal(preferred.searchParams.get("lang"), "zh-Hans");
+    assert.equal(preferred.searchParams.get("redirect_uri"), "https://app.example.com/transactions?month=2026-04&locale=ZH-hans");
+    assert.doesNotMatch(response.headers.getSetCookie().join("\n"), /locale_hint=/u);
+
+    const invalidHint = new NextRequest("https://app.example.com/transactions?locale=es-MX", {
+      headers: { cookie: "locale=ar; app_locale=ru" },
+    });
+    const remembered = new URL((await proxy(invalidHint)).headers.get("location")!);
+    assert.equal(remembered.searchParams.get("lang"), "ru");
+
+    const newVisitor = new URL((await proxy(createRequest("/transactions?locale=es-MX"))).headers.get("location")!);
+    assert.equal(newVisitor.searchParams.has("lang"), false);
+    assert.equal(newVisitor.searchParams.get("carry_locale"), "1");
+  });
+});
+
+test("a public share URL hint does not change demo, other shares, or the JSON route cookies", async (): Promise<void> => {
+  await withCognitoEnv(async (): Promise<void> => {
+    const pageRequest = new NextRequest("https://app.example.com/share/monthly/public-token?locale=ZH-hans", {
+      headers: { cookie: "demo=true; locale=ar; app_locale=ru; demo_locale=he; locale_hint=fa", "accept-language": "ar" },
+    });
+    const response = await proxy(pageRequest);
+    assert.equal(response.status, 200);
+    assert.equal(getLocaleFromRequest(pageRequest), "zh");
+    assert.doesNotMatch(response.headers.getSetCookie().join("\n"), /locale(?:_hint)?=/u);
+
+    const otherShare = new Request("https://app.example.com/share/monthly/another-token", { headers: pageRequest.headers });
+    assert.equal(getLocaleFromRequest(otherShare), "ru");
+    const demoRequest = new Request("https://app.example.com/budget", { headers: pageRequest.headers });
+    assert.equal(getLocaleFromRequest(demoRequest), "he");
+
+    const apiResponse = await proxy(createRequest("/api/share/monthly/public-token?locale=ZH-hans"));
+    assert.equal(apiResponse.status, 200);
+    assert.doesNotMatch(apiResponse.headers.getSetCookie().join("\n"), /locale(?:_hint)?=/u);
+
+    const legacyRequest = new Request("https://app.example.com/share/monthly/public-token", {
+      headers: { cookie: "locale=he", "accept-language": "ar" },
+    });
+    assert.equal(getLocaleFromRequest(legacyRequest), "he");
+  });
+});
+
+test("Demo uses the last valid legacy locale cookie below the URL and Demo preferences", (): void => {
+  const url = "https://app.example.com/budget";
+  const cookie = "locale=es; locale=he; app_locale=ru; demo=true";
+
+  assert.equal(getLocaleFromRequest(new Request(url, { headers: { cookie } })), "he");
+  assert.equal(getLocaleFromRequest(new Request(url, {
+    headers: { cookie: `${cookie}; locale=unsupported` },
+  })), "he");
+  assert.equal(getLocaleFromRequest(new Request(url, {
+    headers: { cookie: `${cookie}; demo_locale=ar` },
+  })), "ar");
+  assert.equal(getLocaleFromRequest(new Request(`${url}?locale=uk`, {
+    headers: { cookie: `${cookie}; demo_locale=ar` },
+  })), "uk");
 });
 
 test("production CSP allows only same-origin and blob workers", async (): Promise<void> => {

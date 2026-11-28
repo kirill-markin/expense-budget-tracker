@@ -245,6 +245,20 @@
   text-underline-offset: 2px;
 }
 
+button.inlineLink {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: var(--cursor-pointer);
+}
+
+button.inlineLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .connectionsSection {
   display: flex;
   flex-direction: column;
