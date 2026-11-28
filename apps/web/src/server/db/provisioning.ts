@@ -1,6 +1,6 @@
 import { type PoolClient } from "pg";
 
-import { type SupportedLocale } from "@/lib/locale";
+import { DEFAULT_LOCALE, type SupportedLocale } from "@/lib/locale";
 import { getInitialLocaleCookie } from "@/lib/localeCookie";
 import { type DbClient, type DbPool } from "@/server/db/contextRunner";
 import { getPool } from "@/server/db/pool";
@@ -57,9 +57,11 @@ type ProvisioningDependencies = Readonly<{
   recordOpenDay: (client: DbClient) => Promise<void>;
 }>;
 
-const createProvisioningDependencies = (): ProvisioningDependencies => ({
+const createProvisioningDependencies = (
+  getInitialLocale: ProvisioningDependencies["getInitialLocale"],
+): ProvisioningDependencies => ({
   pool: getPool(),
-  getInitialLocale: getInitialLocaleCookie,
+  getInitialLocale,
   upsertIdentity: async (client, identity) => upsertUserIdentity(client as PoolClient, identity),
   ensureUserSettings: async (client, userId, locale) => ensureUserSettingsRow(client as PoolClient, userId, locale),
   recordOpenDay: async (client) => {
@@ -242,7 +244,7 @@ export const ensureUserProvisionedWithResolver = async (
  * this helper, the active workspace must already be a valid membership.
  */
 export const ensureUserProvisioned = async (userId: string, workspaceId: string): Promise<void> => {
-  const dependencies = createProvisioningDependencies();
+  const dependencies = createProvisioningDependencies(getInitialLocaleCookie);
   await ensureUserProvisionedWithResolver(
     getCurrentRequestIdentity,
     async (identity, currentWorkspaceId) => ensureProvisionedIdentity(identity, currentWorkspaceId, dependencies),
@@ -259,7 +261,7 @@ export const ensureTrustedIdentityProvisioned = async (
   identity: UserIdentity,
   workspaceId: string,
 ): Promise<void> => {
-  await ensureProvisionedIdentity(identity, workspaceId, createProvisioningDependencies());
+  await ensureProvisionedIdentity(identity, workspaceId, createProvisioningDependencies(async () => DEFAULT_LOCALE));
 };
 
 export const resetProvisioningCachesForTests = (): void => {
