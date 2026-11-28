@@ -88,3 +88,23 @@ test("parseUserSettingsBody rejects unsupported auto filter delay values", (): v
     );
   }
 });
+
+test("parseUserSettingsBody preserves the saved locale ID for Simplified Chinese", (): void => {
+  for (const locale of ["zh", "zh-Hans"]) {
+    const result = parseUserSettingsBody({ locale });
+    assert.equal(result.locale, "zh");
+    assert.equal(result.hasLocale, true);
+  }
+});
+
+test("parseUserSettingsBody rejects unregistered regional preferences", (): void => {
+  assert.throws(
+    () => parseUserSettingsBody({ locale: "es-MX" }),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof ApiRouteError);
+      assert.equal(error.status, 400);
+      assert.match(error.publicMessage, /^Invalid locale\./);
+      return true;
+    },
+  );
+});

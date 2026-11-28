@@ -11,6 +11,7 @@ import {
   getRawQueryByteLength,
   MAX_OAUTH_LOGIN_QUERY_BYTES,
 } from "@expense-budget-tracker/agent-shared";
+import { matchAcceptLanguage, parseSupportedLocale } from "@expense-budget-tracker/agent-shared/locales";
 import { setCookie } from "hono/cookie";
 import { renderLoginPage } from "../templates/login.js";
 import { resolveBrowserSession } from "../server/oauth/session.js";
@@ -45,23 +46,6 @@ const isAllowedRedirectUri = (uri: string): boolean => {
   }
 };
 
-const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
-type Locale = typeof SUPPORTED_LOCALES[number];
-
-const parseLocale = (acceptLanguage: string | null): Locale => {
-  if (acceptLanguage === null) return "en";
-  const tags = acceptLanguage.split(",").map((tag) => {
-    const [lang, q] = tag.trim().split(";q=");
-    return { lang: lang.trim().split("-")[0].toLowerCase(), q: q !== undefined ? parseFloat(q) : 1.0 };
-  });
-  tags.sort((a, b) => b.q - a.q);
-  for (const tag of tags) {
-    const match = SUPPORTED_LOCALES.find((l) => l === tag.lang);
-    if (match !== undefined) return match;
-  }
-  return "en";
-};
-
 export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono => {
   const app = new Hono();
 
@@ -82,10 +66,8 @@ export const createLoginPageApp = (dependencies: LoginPageDependencies): Hono =>
     const identity = await dependencies.resolveBrowserSession(c);
     if (identity !== null) return c.redirect(redirectUri, 302);
 
-    const langParam = c.req.query("lang") ?? "";
-    const locale: Locale = (SUPPORTED_LOCALES as ReadonlyArray<string>).includes(langParam)
-      ? (langParam as Locale)
-      : parseLocale(c.req.header("accept-language") ?? null);
+    const locale = parseSupportedLocale(c.req.query("lang"))
+      ?? matchAcceptLanguage(c.req.header("accept-language"));
 
     const domain = process.env.COOKIE_DOMAIN ?? "";
     const websiteUrl = domain.startsWith(".")

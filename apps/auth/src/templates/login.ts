@@ -5,11 +5,14 @@
  * JS implements the same two-step OTP flow as the old LoginForm.tsx.
  * On successful verification, auth service sets session cookies (Domain=COOKIE_DOMAIN)
  * and client JS redirects to redirect_uri.
- * RTL: dir="rtl" when locale is fa, ar, or he; CSS logical properties throughout.
  */
-import { t } from "../i18n/translations.js";
+import {
+  LOCALE_REGISTRY,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+} from "@expense-budget-tracker/agent-shared/locales";
 
-const RTL_LOCALES = new Set(["fa", "ar", "he"]);
+import { t } from "../i18n/translations.js";
 
 const escapeHtml = (str: string): string =>
   str
@@ -19,27 +22,19 @@ const escapeHtml = (str: string): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-const LOCALE_LABELS: Readonly<Record<string, string>> = {
-  en: "English",
-  ru: "Русский",
-  es: "Español",
-  uk: "Українська",
-  fa: "فارسی",
-  zh: "中文",
-  ar: "العربية",
-  he: "עברית",
-};
-
-const SUPPORTED_LOCALES = ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"] as const;
+const firstLoginLocales: ReadonlyArray<SupportedLocale> = ["en", "es", "zh"];
+const loginLocales: ReadonlyArray<SupportedLocale> = [
+  ...firstLoginLocales,
+  ...SUPPORTED_LOCALES.filter((locale) => !firstLoginLocales.includes(locale)),
+];
 
 export const renderLoginPage = (
-  locale: string,
+  locale: SupportedLocale,
   redirectUri: string,
   websiteUrl: string,
   cookieDomain: string,
 ): string => {
-  const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
-  const lang = locale;
+  const { tag: lang, direction: dir } = LOCALE_REGISTRY[locale];
 
   return `<!DOCTYPE html>
 <html lang="${lang}" dir="${dir}">
@@ -218,7 +213,7 @@ export const renderLoginPage = (
     <div class="login-card">
       <div class="login-lang">
         <select id="lang-select">
-          ${SUPPORTED_LOCALES.map((l) => `<option value="${l}"${l === locale ? " selected" : ""}>${escapeHtml(LOCALE_LABELS[l])}</option>`).join("\n          ")}
+          ${loginLocales.map((l) => `<option value="${l}"${l === locale ? " selected" : ""}>${escapeHtml(LOCALE_REGISTRY[l].label)}</option>`).join("\n          ")}
         </select>
       </div>
       <h1 class="login-title">${escapeHtml(t(locale, "title"))}</h1>

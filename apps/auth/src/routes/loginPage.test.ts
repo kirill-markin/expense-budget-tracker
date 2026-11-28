@@ -50,3 +50,36 @@ test("login clears an invalid non-empty session instead of redirecting in a loop
     else process.env.COOKIE_DOMAIN = previousCookieDomain;
   }
 });
+
+test("login shares locale selection while keeping existing cookie and picker values", async (t): Promise<void> => {
+  const previousAllowedRedirects = process.env.ALLOWED_REDIRECT_URIS;
+  process.env.ALLOWED_REDIRECT_URIS = "https://app.example.com";
+  t.after(() => {
+    if (previousAllowedRedirects === undefined) delete process.env.ALLOWED_REDIRECT_URIS;
+    else process.env.ALLOWED_REDIRECT_URIS = previousAllowedRedirects;
+  });
+
+  const app = createLoginPageApp({ resolveBrowserSession: async () => null });
+  const loginPath = "/login?redirect_uri=https%3A%2F%2Fapp.example.com%2Fbudget";
+
+  for (const lang of ["zh", "ZH-hans"]) {
+    const response = await app.request(`${loginPath}&lang=${lang}`, { headers: { "Accept-Language": "ar" } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.getSetCookie().join("\n"), /locale=zh;/u);
+
+    const html = await response.text();
+    assert.match(html, /<html lang="zh-Hans" dir="ltr">/u);
+    assert.match(html, /<option value="zh" selected>中文<\/option>/u);
+    assert.deepEqual(
+      Array.from(html.matchAll(/<option value="([^"]+)"/gu), (match) => match[1]),
+      ["en", "es", "zh", "ru", "uk", "fa", "ar", "he"],
+    );
+  }
+
+  const response = await app.request(`${loginPath}&lang=es-MX`, {
+    headers: { "Accept-Language": "ru;q=0, es;q=1.1, he-IL;q=0.8, ar;q=0.7" },
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.getSetCookie().join("\n"), /locale=he;/u);
+  assert.match(await response.text(), /<html lang="he" dir="rtl">/u);
+});

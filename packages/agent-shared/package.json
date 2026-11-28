@@ -106,6 +106,17 @@
         "default": "./dist-cjs/crockford.cjs"
       },
       "default": "./dist/crockford.js"
+    },
+    "./locales": {
+      "import": {
+        "types": "./dist/locales.d.ts",
+        "default": "./dist/locales.js"
+      },
+      "require": {
+        "types": "./dist-cjs/locales.d.cts",
+        "default": "./dist-cjs/locales.cjs"
+      },
+      "default": "./dist/locales.js"
     }
   },
   "scripts": {
