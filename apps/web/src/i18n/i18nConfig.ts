@@ -1,40 +1,19 @@
 import i18next, { type i18n } from "i18next";
-import { initReactI18next } from "react-i18next";
 
 import type { SupportedLocale } from "@/lib/locale";
 
-import ar from "./ar.json";
-import en from "./en.json";
-import es from "./es.json";
-import fa from "./fa.json";
-import he from "./he.json";
-import ru from "./ru.json";
-import uk from "./uk.json";
-import zh from "./zh.json";
+export type TranslationBundle = Readonly<Record<string, string>>;
 
-const instances = new Map<SupportedLocale, i18n>();
-
-export const initI18n = (locale: SupportedLocale): i18n => {
-  const cached = instances.get(locale);
-  if (cached !== undefined) return cached;
-
+export const initI18n = (locale: SupportedLocale, messages: TranslationBundle): i18n => {
   const instance = i18next.createInstance();
-  instance.use(initReactI18next).init({
+  void instance.init({
     lng: locale,
-    fallbackLng: "en",
+    load: "currentOnly",
+    fallbackLng: false,
+    initAsync: false,
     interpolation: { escapeValue: false },
-    resources: {
-      en: { translation: en },
-      ru: { translation: ru },
-      es: { translation: es },
-      uk: { translation: uk },
-      fa: { translation: fa },
-      zh: { translation: zh },
-      ar: { translation: ar },
-      he: { translation: he },
-    },
+    resources: { [locale]: { translation: { ...messages } } },
   });
 
-  instances.set(locale, instance);
   return instance;
 };

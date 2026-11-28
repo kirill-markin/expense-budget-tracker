@@ -1,5 +1,7 @@
 import type { SupportedLocale } from "@/lib/locale";
 
+import type { TranslationBundle } from "./i18nConfig";
+
 import ar from "./ar.json";
 import en from "./en.json";
 import es from "./es.json";
@@ -9,22 +11,22 @@ import ru from "./ru.json";
 import uk from "./uk.json";
 import zh from "./zh.json";
 
-type TranslationBundle = Readonly<Record<string, string>>;
-
 const bundles: Readonly<Record<SupportedLocale, TranslationBundle>> = {
-  en: en as TranslationBundle,
-  ru: ru as TranslationBundle,
-  es: es as TranslationBundle,
-  uk: uk as TranslationBundle,
-  fa: fa as TranslationBundle,
-  zh: zh as TranslationBundle,
-  ar: ar as TranslationBundle,
-  he: he as TranslationBundle,
+  en,
+  ru,
+  es,
+  uk,
+  fa,
+  zh,
+  ar,
+  he,
 };
+
+export const getMessages = (locale: SupportedLocale): TranslationBundle => bundles[locale];
 
 /** Direct key lookup for server components. Falls back to English on missing key. */
 export const t = (locale: SupportedLocale, key: string): string => {
-  const value = bundles[locale][key];
+  const value = getMessages(locale)[key];
   if (value !== undefined) return value;
   const fallback = bundles.en[key];
   if (fallback !== undefined) {

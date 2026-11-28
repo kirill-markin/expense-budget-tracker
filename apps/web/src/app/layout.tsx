@@ -11,7 +11,7 @@ import { getLocaleCookie } from "@/lib/localeCookie";
 import { SYSTEM_THEME_INIT_SCRIPT, type ThemePreference } from "@/lib/theme";
 import { getThemeCookie } from "@/lib/themeCookie";
 import { I18nProvider } from "@/i18n/I18nProvider";
-import { t } from "@/i18n/serverT";
+import { getMessages, t } from "@/i18n/serverT";
 import { buildRequestIdentity } from "@/server/db/requestIdentity";
 import { listWorkspaces, type WorkspaceSummary } from "@/server/workspaces";
 import { getReportCurrency } from "@/server/reportCurrency";
@@ -90,7 +90,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
         <body>
           <ThemeProvider initialPreference={publicTheme} canPersist={false} canAdopt={false}>
             <LowercaseProvider initialLowercase={publicLowercase}>
-              <I18nProvider locale={publicLocale}>
+              <I18nProvider locale={publicLocale} messages={getMessages(publicLocale)}>
                 {children}
               </I18nProvider>
             </LowercaseProvider>
@@ -185,7 +185,7 @@ export default async function RootLayout(props: Readonly<{ children: React.React
       <body>
         <ThemeProvider initialPreference={theme} canPersist={true} canAdopt={themeFromAccount}>
           <LowercaseProvider initialLowercase={lowercase}>
-            <I18nProvider locale={locale}>
+            <I18nProvider locale={locale} messages={getMessages(locale)}>
               <FormatProvider numberFormat={numberFormat} dateFormat={dateFormat}>
                 <TableEditorActivationProvider>
                   <FilteredModeProvider isDemoMode={demo} autoFilterDelayMinutes={autoFilterDelayMinutes}>
